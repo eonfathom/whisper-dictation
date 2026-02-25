@@ -2,7 +2,7 @@
 
 Push-to-talk dictation for Linux. Hold **Ctrl+Alt** to record, release to transcribe and type the result wherever your cursor is.
 
-Uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for local, offline speech-to-text with GPU acceleration. Inspired by [WhisperFlow](https://github.com/savbell/whisper-writer) but built as a lightweight, single-file alternative for Linux/X11.
+Uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for local, offline speech-to-text with GPU acceleration. Inspired by [Whisper Writer](https://github.com/savbell/whisper-writer) but built as a lightweight, single-file alternative for Linux/X11.
 
 ## Features
 
@@ -134,6 +134,25 @@ chmod +x uninstall.sh
 3. On release, the audio buffer is passed to **faster-whisper** for transcription
 4. Filler words are stripped and the result is copied to the clipboard
 5. **xdotool** simulates a paste keystroke (Ctrl+V or Ctrl+Shift+V for terminals)
+
+## Comparison with Whisper Writer
+
+This project was inspired by [Whisper Writer](https://github.com/savbell/whisper-writer). Here's how they compare:
+
+| | Whisper Dictation | Whisper Writer |
+|---|---|---|
+| **Architecture** | Single file (278 lines) | ~12 source files, full PyQt5 GUI |
+| **Dependencies** | 4 Python packages + 3 system tools | 69 Python packages |
+| **Text output** | Clipboard paste (instant) | Keystroke simulation (slow, known bugs with duplicated/missing chars) |
+| **Post-processing** | Filler word removal, punctuation cleanup | Trailing space/period removal only |
+| **Recording modes** | Hold-to-record | Continuous, VAD, press-to-toggle, hold-to-record |
+| **Hotkey** | Ctrl+Alt (evdev) | Configurable chord (evdev or pynput) |
+| **Configuration** | 4 environment variables | YAML config + settings GUI |
+| **STT backend** | faster-whisper (local) | faster-whisper (local) + OpenAI API |
+| **Platforms** | Linux/X11 only | Linux, macOS, Windows |
+| **GPU** | CUDA | CUDA with auto-fallback to CPU |
+
+**Why this project exists:** Whisper Writer is a full-featured desktop application that supports multiple platforms and recording modes. Whisper Dictation trades that flexibility for simplicity and reliability — clipboard paste is faster and more reliable than keystroke simulation, the single-file design has no complex dependency chains, and the filler word removal produces cleaner output. If you're on Linux/X11 and want something that just works with minimal setup, this is for you.
 
 ## License
 
