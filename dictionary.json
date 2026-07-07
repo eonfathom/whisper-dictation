@@ -14,7 +14,8 @@
     "ZenBook",
     "faster-whisper",
     "OBS",
-    "Andregg"
+    "Andregg",
+    "Rokid"
   ],
 
   "corrections": {
@@ -22,6 +23,7 @@
     "cloud code": "Claude Code",
     "wisper flow": "Wispr Flow",
     "whisper flow": "Wispr Flow",
-    "obsidion": "Obsidian"
+    "obsidion": "Obsidian",
+    "rocket": "Rokid"
   }
 }
