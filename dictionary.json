@@ -1,0 +1,27 @@
+{
+  "_comment": "Personal dictionary. 'hotwords' bias Whisper toward your vocabulary so it hears names/jargon correctly. 'corrections' are a whole-word, case-insensitive find/replace safety net applied after transcription. Edit freely; restart the app to reload.",
+
+  "hotwords": [
+    "Eon",
+    "Fathom",
+    "Claude",
+    "Claude Code",
+    "Anthropic",
+    "Obsidian",
+    "Wispr Flow",
+    "Wacom",
+    "Cintiq",
+    "ZenBook",
+    "faster-whisper",
+    "OBS",
+    "Andregg"
+  ],
+
+  "corrections": {
+    "clod code": "Claude Code",
+    "cloud code": "Claude Code",
+    "wisper flow": "Wispr Flow",
+    "whisper flow": "Wispr Flow",
+    "obsidion": "Obsidian"
+  }
+}
