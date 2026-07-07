@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Whisper Dictation - Hold Ctrl+Alt, speak, release to type.
+Whisper Dictation - Hold Ctrl+Win, speak, release to type.
 
-Cross-platform push-to-talk dictation (Linux/X11 + Windows). Hold Ctrl+Alt to
+Cross-platform push-to-talk dictation (Linux/X11 + Windows). Hold Ctrl+Win to
 record, release to stop, transcribe, and paste the result wherever your cursor is.
+The chord is configurable via WHISPER_HOTKEY (e.g. "ctrl+alt", "ctrl+shift").
 
   Linux   : evdev for global hotkeys, xclip/xdotool for clipboard paste.
             User must be in the 'input' group.
@@ -47,6 +48,15 @@ MODEL_SIZE = os.environ.get("WHISPER_MODEL", "base")
 LANGUAGE = os.environ.get("WHISPER_LANG", "en")
 SAMPLE_RATE = 16000
 CHANNELS = 1
+
+# Push-to-talk chord: hold all these modifiers together to record. Override via
+# WHISPER_HOTKEY, e.g. "ctrl+alt" or "ctrl+shift". Supported modifiers:
+# ctrl, alt, win, shift  ("win" is the Windows/Super key).
+HOTKEY_MODS = tuple(
+    m for m in (t.strip().lower() for t in
+                os.environ.get("WHISPER_HOTKEY", "ctrl+win").split("+")) if m
+) or ("ctrl", "win")
+HOTKEY_LABEL = "+".join(m.capitalize() for m in HOTKEY_MODS)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DICT_PATH = os.environ.get(
@@ -368,17 +378,23 @@ def _set_recording(active):
 
 # --- Hotkey backends ----------------------------------------------------------
 if IS_WINDOWS:
-    _held = set()  # tokens currently held: {"ctrl", "alt"}
+    _held = set()  # modifier tokens currently held, e.g. {"ctrl", "win"}
+
+    _WIN_TOKENS = {
+        "ctrl": (PKey.ctrl_l, PKey.ctrl_r, PKey.ctrl),
+        "alt": (PKey.alt_l, PKey.alt_r, PKey.alt_gr),
+        "win": (PKey.cmd, PKey.cmd_l, PKey.cmd_r),  # Windows/Super key
+        "shift": (PKey.shift_l, PKey.shift_r, PKey.shift),
+    }
+    _WIN_KEY_TO_TOKEN = {
+        k: tok for tok, keys in _WIN_TOKENS.items() for k in keys
+    }
 
     def _token(key):
-        if key in (PKey.ctrl_l, PKey.ctrl_r, PKey.ctrl):
-            return "ctrl"
-        if key in (PKey.alt_l, PKey.alt_r, PKey.alt_gr):
-            return "alt"
-        return None
+        return _WIN_KEY_TO_TOKEN.get(key)
 
-    def _both_held():
-        return "ctrl" in _held and "alt" in _held
+    def _combo_held():
+        return all(m in _held for m in HOTKEY_MODS)
 
     def monitor_keys():
         """Monitor keyboard globally via pynput (works in any window)."""
@@ -386,13 +402,13 @@ if IS_WINDOWS:
             tok = _token(key)
             if tok:
                 _held.add(tok)
-                _set_recording(_both_held())
+                _set_recording(_combo_held())
 
         def on_release(key):
             tok = _token(key)
             if tok:
                 _held.discard(tok)
-                _set_recording(_both_held())
+                _set_recording(_combo_held())
 
         with pynput_keyboard.Listener(
             on_press=on_press, on_release=on_release
@@ -400,12 +416,18 @@ if IS_WINDOWS:
             listener.join()
 
 else:
-    CTRL_CODES = {ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL}
-    ALT_CODES = {ecodes.KEY_LEFTALT, ecodes.KEY_RIGHTALT}
+    _LINUX_TOKENS = {
+        "ctrl": {ecodes.KEY_LEFTCTRL, ecodes.KEY_RIGHTCTRL},
+        "alt": {ecodes.KEY_LEFTALT, ecodes.KEY_RIGHTALT},
+        "win": {ecodes.KEY_LEFTMETA, ecodes.KEY_RIGHTMETA},  # Super key
+        "shift": {ecodes.KEY_LEFTSHIFT, ecodes.KEY_RIGHTSHIFT},
+    }
     keys_held = set()
 
-    def _both_held():
-        return bool(keys_held & CTRL_CODES) and bool(keys_held & ALT_CODES)
+    def _combo_held():
+        return all(
+            bool(keys_held & _LINUX_TOKENS.get(m, set())) for m in HOTKEY_MODS
+        )
 
     def find_keyboards():
         """Find keyboard input devices (evdev)."""
@@ -436,7 +458,7 @@ else:
                             keys_held.discard(event.code)
                         else:
                             continue  # ignore key-repeat
-                        _set_recording(_both_held())
+                        _set_recording(_combo_held())
                 except OSError:
                     pass
 
@@ -454,7 +476,7 @@ def main():
     print("", flush=True)
 
     if IS_WINDOWS:
-        print("  Hold Ctrl+Alt to record, release to transcribe & type.", flush=True)
+        print(f"  Hold {HOTKEY_LABEL} to record, release to transcribe & type.", flush=True)
         print("  Works in any window. Ctrl+C in this window to quit.", flush=True)
         print("", flush=True)
         monitor_keys()
@@ -466,7 +488,7 @@ def main():
             print("  Then log out and log back in.", flush=True)
             sys.exit(1)
         print("", flush=True)
-        print("  Hold Ctrl+Alt to record, release to transcribe & type.", flush=True)
+        print(f"  Hold {HOTKEY_LABEL} to record, release to transcribe & type.", flush=True)
         print("  Works in any window. Ctrl+C to quit.", flush=True)
         print("", flush=True)
         monitor_keys(keyboards)

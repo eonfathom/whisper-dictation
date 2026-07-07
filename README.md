@@ -1,6 +1,6 @@
 # Whisper Dictation
 
-Push-to-talk dictation for **Linux and Windows**. Hold **Ctrl+Alt** to record, release to transcribe and paste the result wherever your cursor is.
+Push-to-talk dictation for **Linux and Windows**. Hold **Ctrl+Win** to record, release to transcribe and paste the result wherever your cursor is.
 
 Uses [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for local, offline speech-to-text with GPU acceleration. Inspired by [Whisper Writer](https://github.com/savbell/whisper-writer) but built as a lightweight, single-file alternative that just works with minimal setup.
 
@@ -80,9 +80,9 @@ whisper-dictation          # or it starts automatically on login
 ```
 
 Then, on either platform:
-1. Hold **Ctrl+Alt** — recording starts
+1. Hold **Ctrl+Win** — recording starts
 2. Speak
-3. Release **Ctrl+Alt** — audio is transcribed and pasted at your cursor
+3. Release **Ctrl+Win** — audio is transcribed and pasted at your cursor
 
 ## Configuration
 
@@ -95,6 +95,7 @@ Configuration is via environment variables.
 |---|---|---|
 | `WHISPER_MODEL` | `base` | Model size: `tiny`, `base`, `small`, `medium`, `large-v3` |
 | `WHISPER_LANG` | `en` | Language code (`en`, `es`, `fr`, …) or empty for auto-detect |
+| `WHISPER_HOTKEY` | `ctrl+win` | Push-to-talk chord; `+`-joined modifiers from `ctrl`, `alt`, `win`, `shift` |
 | `WHISPER_DEVICE` | auto | Auto-detected: `cuda` if a GPU is present, else `cpu`. Override with `cuda`/`cpu`. |
 | `WHISPER_COMPUTE` | auto | `float16` on GPU, `int8` on CPU. Override with `float16`/`int8`/`float32`. |
 | `WHISPER_DICT` | `dictionary.json` | Path to the personal dictionary file |
@@ -159,7 +160,8 @@ sudo usermod -aG input $USER
 
 - **First run is slow** — it downloads the model (~140 MB for `base`) and warms up CUDA.
 - **`cublas64_12.dll ... cannot be loaded`** — the CUDA libraries aren't installed. Run `.\install-windows.ps1` again, or `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 nvidia-cuda-runtime-cu12` into the venv. The app adds these to the DLL search path automatically at startup.
-- **Pastes into the wrong place** — the text is pasted into whatever window has focus when you release Ctrl+Alt. Keep your cursor where you want the text.
+- **Pastes into the wrong place** — the text is pasted into whatever window has focus when you release Ctrl+Win. Keep your cursor where you want the text.
+- **Windows key opens the Start menu** — releasing the Win key on its own can pop the Start menu. Press Ctrl a moment before Win, or choose another chord: `WHISPER_HOTKEY=ctrl+alt` (or `ctrl+shift`).
 - **No GPU?** That's fine — it runs on CPU automatically. Use `WHISPER_MODEL=base` or `small` for reasonable speed.
 
 ### Slow transcription
@@ -176,7 +178,7 @@ sudo usermod -aG input $USER
 ## How it works
 
 1. Keyboard events are captured globally — **evdev** on Linux, **pynput** on Windows (no window focus required)
-2. When Ctrl+Alt are both held, audio recording starts via **sounddevice**
+2. When Ctrl+Win are both held, audio recording starts via **sounddevice**
 3. On release, the audio buffer is passed to **faster-whisper** for transcription (CUDA if available, else CPU)
 4. The transcript is cleaned: filler words stripped, then personal-dictionary corrections applied
 5. The result is copied to the clipboard and pasted — **xdotool** on Linux (Ctrl+V, or Ctrl+Shift+V in terminals), **pynput** on Windows (Ctrl+V)
@@ -192,7 +194,7 @@ This project was inspired by [Whisper Writer](https://github.com/savbell/whisper
 | **Text output** | Clipboard paste (instant) | Keystroke simulation (slow, known bugs with duplicated/missing chars) |
 | **Post-processing** | Filler removal, punctuation cleanup, personal dictionary | Trailing space/period removal only |
 | **Recording modes** | Hold-to-record | Continuous, VAD, press-to-toggle, hold-to-record |
-| **Hotkey** | Ctrl+Alt (evdev on Linux, pynput on Windows) | Configurable chord (evdev or pynput) |
+| **Hotkey** | Ctrl+Win, configurable via `WHISPER_HOTKEY` (evdev on Linux, pynput on Windows) | Configurable chord (evdev or pynput) |
 | **Configuration** | Environment variables + `dictionary.json` | YAML config + settings GUI |
 | **STT backend** | faster-whisper (local) | faster-whisper (local) + OpenAI API |
 | **Platforms** | Linux/X11 + Windows | Linux, macOS, Windows |

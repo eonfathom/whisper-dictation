@@ -53,23 +53,26 @@ if ($hasGpu) {
 if ($Autostart) {
     $startup = [Environment]::GetFolderPath("Startup")
     $lnkPath = Join-Path $startup "Whisper Dictation.lnk"
-    $target = "powershell.exe"
-    $arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$(Join-Path $root 'run-windows.ps1')`""
+    # Launch via the venv's pythonw.exe - no console window at all, for a clean,
+    # flash-free start on login. Falls back to python.exe if pythonw is missing.
+    $pythonw = Join-Path $venv "Scripts\pythonw.exe"
+    $target = if (Test-Path $pythonw) { $pythonw } else { $python }
+    $arguments = "`"$(Join-Path $root 'dictation.py')`""
     $shell = New-Object -ComObject WScript.Shell
     $lnk = $shell.CreateShortcut($lnkPath)
     $lnk.TargetPath = $target
     $lnk.Arguments = $arguments
     $lnk.WorkingDirectory = $root
-    $lnk.WindowStyle = 7  # minimized
-    $lnk.Description = "Whisper Dictation - hold Ctrl+Alt to dictate"
+    $lnk.WindowStyle = 7  # minimized (pythonw has no window anyway)
+    $lnk.Description = "Whisper Dictation - hold Ctrl+Win to dictate"
     $lnk.Save()
-    Write-Host "Autostart enabled: $lnkPath" -ForegroundColor Green
+    Write-Host "Autostart enabled (windowless via pythonw): $lnkPath" -ForegroundColor Green
 }
 
 Write-Host ""
 Write-Host "=== Installation complete ===" -ForegroundColor Cyan
 Write-Host "  Start now:  .\run-windows.ps1"
-Write-Host "  Hotkey:     hold Ctrl+Alt to record, release to transcribe & type"
+Write-Host "  Hotkey:     hold Ctrl+Win to record, release to transcribe & type"
 Write-Host "  Dictionary: edit dictionary.json to add your own words"
 if (-not $Autostart) {
     Write-Host "  Autostart:  re-run with  .\install-windows.ps1 -Autostart"

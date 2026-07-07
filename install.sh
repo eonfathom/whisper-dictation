@@ -93,7 +93,7 @@ cat > "$AUTOSTART" <<DESKTOP_EOF
 [Desktop Entry]
 Type=Application
 Name=Whisper Dictation
-Comment=Hold Ctrl+Alt to dictate with Whisper
+Comment=Hold Ctrl+Win to dictate with Whisper
 Exec=$LAUNCHER
 Hidden=false
 X-GNOME-Autostart-enabled=true
@@ -104,7 +104,7 @@ echo "=== Installation complete ==="
 echo ""
 echo "  Start now:   $LAUNCHER"
 echo "  Autostart:   enabled (runs on login)"
-echo "  Hotkey:      Hold Ctrl+Alt to record, release to type"
+echo "  Hotkey:      Hold Ctrl+Win to record, release to type"
 echo ""
 echo "  Configuration (environment variables):"
 echo "    WHISPER_MODEL=base     (tiny, base, small, medium, large-v3)"
