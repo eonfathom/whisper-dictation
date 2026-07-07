@@ -58,6 +58,12 @@ HOTKEY_MODS = tuple(
 ) or ("ctrl", "win")
 HOTKEY_LABEL = "+".join(m.capitalize() for m in HOTKEY_MODS)
 
+# Trailing-audio robustness (seconds, override via env): capture a short grace
+# tail after release so the last word isn't clipped, and pad the buffer with
+# silence so Whisper reliably finalizes the final segment.
+RELEASE_TAIL_SEC = float(os.environ.get("WHISPER_RELEASE_TAIL", "0.2"))
+TRAILING_PAD_SEC = float(os.environ.get("WHISPER_PAD", "0.4"))
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DICT_PATH = os.environ.get(
     "WHISPER_DICT", os.path.join(SCRIPT_DIR, "dictionary.json")
@@ -223,7 +229,12 @@ if IS_WINDOWS:
         return None
 
     def type_text(text, window=None):
-        """Copy to clipboard and paste (Ctrl+V) into the foreground window."""
+        """Paste the text (Ctrl+V), then leave the clean text on the clipboard.
+
+        The paste uses a trailing space so back-to-back dictations stay
+        separated; afterwards the clipboard is reset to the clean transcription
+        (no trailing space) so you can re-paste it cleanly - like Wispr Flow.
+        """
         if not text.strip():
             return
         pyperclip.copy(text + " ")
@@ -231,6 +242,8 @@ if IS_WINDOWS:
         with _kbd_controller.pressed(PKey.ctrl):
             _kbd_controller.press("v")
             _kbd_controller.release("v")
+        time.sleep(0.05)  # let the target app consume the paste first
+        pyperclip.copy(text)  # leave the clean transcription on the clipboard
 
 else:
     TERMINAL_CLASSES = {
@@ -331,18 +344,31 @@ def stop_and_transcribe():
     """Stop recording, transcribe, and type the result."""
     global recording, stream
 
-    if stream is not None:
-        stream.stop()
-        stream.close()
-        stream = None
+    # Grace tail: keep capturing for a beat after release so trailing words
+    # aren't clipped by release timing or the final audio block being dropped
+    # when the stream stops. The recording callback keeps appending while we wait.
+    local_stream = stream
+    if RELEASE_TAIL_SEC > 0:
+        time.sleep(RELEASE_TAIL_SEC)
+    if local_stream is not None:
+        local_stream.stop()
+        local_stream.close()
+        if stream is local_stream:
+            stream = None
     recording = False
 
-    if not audio_frames:
+    frames = list(audio_frames)
+    if not frames:
         print(">> No audio captured.", flush=True)
         return
 
-    audio = np.concatenate(audio_frames, axis=0).flatten()
+    audio = np.concatenate(frames, axis=0).flatten()
     duration = len(audio) / SAMPLE_RATE
+    # Pad with trailing silence so Whisper reliably finalizes the last segment.
+    if TRAILING_PAD_SEC > 0:
+        audio = np.concatenate(
+            [audio, np.zeros(int(SAMPLE_RATE * TRAILING_PAD_SEC), dtype=audio.dtype)]
+        )
     print(f">> Transcribing {duration:.1f}s of audio...", flush=True)
 
     kwargs = {}
