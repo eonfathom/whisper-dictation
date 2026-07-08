@@ -1,4 +1,4 @@
-# Whisper Dictation installer (Windows)
+# Vox installer (Windows)
 # Creates a virtual environment, installs dependencies (with GPU libraries when
 # an NVIDIA GPU is present), and optionally sets the app to start on login.
 #
@@ -12,7 +12,7 @@ $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 Set-Location $root
 
-Write-Host "=== Whisper Dictation installer (Windows) ===" -ForegroundColor Cyan
+Write-Host "=== Vox installer (Windows) ===" -ForegroundColor Cyan
 
 # --- Find a Python launcher ---
 $py = if (Get-Command py -ErrorAction SilentlyContinue) { "py" }
@@ -52,7 +52,7 @@ if ($hasGpu) {
 # --- Optional autostart ---
 if ($Autostart) {
     $startup = [Environment]::GetFolderPath("Startup")
-    $lnkPath = Join-Path $startup "Whisper Dictation.lnk"
+    $lnkPath = Join-Path $startup "Vox.lnk"
     # Launch via the venv's pythonw.exe - no console window at all, for a clean,
     # flash-free start on login. Falls back to python.exe if pythonw is missing.
     $pythonw = Join-Path $venv "Scripts\pythonw.exe"
@@ -64,7 +64,7 @@ if ($Autostart) {
     $lnk.Arguments = $arguments
     $lnk.WorkingDirectory = $root
     $lnk.WindowStyle = 7  # minimized (pythonw has no window anyway)
-    $lnk.Description = "Whisper Dictation - hold Ctrl+Win to dictate"
+    $lnk.Description = "Vox - hold Ctrl+Win to dictate"
     $lnk.Save()
     Write-Host "Autostart enabled (windowless via pythonw): $lnkPath" -ForegroundColor Green
 }

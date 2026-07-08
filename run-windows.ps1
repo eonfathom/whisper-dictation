@@ -1,4 +1,4 @@
-# Whisper Dictation launcher (Windows)
+# Vox launcher (Windows)
 # Runs the app from the local virtual environment. Pass-through args are
 # forwarded to dictation.py, e.g.:  .\run-windows.ps1
 # Configure via environment variables before launching, e.g.:

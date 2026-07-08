@@ -1,4 +1,4 @@
-# Whisper Dictation
+# Vox
 
 Push-to-talk dictation for **Linux and Windows**. Hold **Ctrl+Win** to record, release to transcribe and paste the result wherever your cursor is.
 
@@ -40,20 +40,20 @@ sudo usermod -aG input $USER
 # Log out and back in for group change to take effect
 
 # Clone and install
-git clone https://github.com/eonfathom/whisper-dictation.git
-cd whisper-dictation
+git clone https://github.com/eonfathom/vox.git
+cd vox
 chmod +x install.sh
 ./install.sh
 ```
 
-The installer creates a venv at `~/.local/share/whisper-dictation/venv/`, installs dependencies, creates a launcher at `~/.local/bin/whisper-dictation`, and sets up autostart on login.
+The installer creates a venv at `~/.local/share/vox/venv/`, installs dependencies, creates a launcher at `~/.local/bin/vox`, and sets up autostart on login.
 
 ## Installation (Windows)
 
 ```powershell
 # Clone
-git clone https://github.com/eonfathom/whisper-dictation.git
-cd whisper-dictation
+git clone https://github.com/eonfathom/vox.git
+cd vox
 
 # Install: creates a venv, installs deps, adds GPU libraries if an NVIDIA GPU is present
 .\install-windows.ps1
@@ -71,7 +71,7 @@ The installer auto-detects your GPU. On an NVIDIA machine it installs the CUDA l
 
 **Linux:**
 ```bash
-whisper-dictation          # or it starts automatically on login
+vox          # or it starts automatically on login
 ```
 
 **Windows:**
@@ -107,7 +107,7 @@ Example — force the tiny model on CPU:
 
 ```bash
 # Linux
-WHISPER_MODEL=tiny WHISPER_DEVICE=cpu whisper-dictation
+WHISPER_MODEL=tiny WHISPER_DEVICE=cpu vox
 ```
 ```powershell
 # Windows
@@ -176,7 +176,7 @@ sudo usermod -aG input $USER
 
 **Linux:** `./uninstall.sh`
 
-**Windows:** delete the repo folder and remove the `Whisper Dictation` shortcut from your Startup folder (`shell:startup`) if you enabled autostart.
+**Windows:** delete the repo folder and remove the `Vox` shortcut from your Startup folder (`shell:startup`) if you enabled autostart.
 
 ## How it works
 
@@ -190,7 +190,7 @@ sudo usermod -aG input $USER
 
 This project was inspired by [Whisper Writer](https://github.com/savbell/whisper-writer). Here's how they compare:
 
-| | Whisper Dictation | Whisper Writer |
+| | Vox | Whisper Writer |
 |---|---|---|
 | **Architecture** | Single file | ~12 source files, full PyQt5 GUI |
 | **Dependencies** | A handful of Python packages | 69 Python packages |
@@ -203,7 +203,7 @@ This project was inspired by [Whisper Writer](https://github.com/savbell/whisper
 | **Platforms** | Linux/X11 + Windows | Linux, macOS, Windows |
 | **GPU** | CUDA with auto-fallback to CPU | CUDA with auto-fallback to CPU |
 
-**Why this project exists:** Whisper Dictation trades flexibility for simplicity and reliability — clipboard paste is faster and more reliable than keystroke simulation, the single-file design has no complex dependency chains, and filler-word removal plus a personal dictionary produce cleaner output. If you want something that just works on Linux or Windows with minimal setup, this is for you.
+**Why this project exists:** Vox trades flexibility for simplicity and reliability — clipboard paste is faster and more reliable than keystroke simulation, the single-file design has no complex dependency chains, and filler-word removal plus a personal dictionary produce cleaner output. If you want something that just works on Linux or Windows with minimal setup, this is for you.
 
 ## License
 

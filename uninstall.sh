@@ -1,17 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "=== Whisper Dictation Uninstaller ==="
+echo "=== Vox Uninstaller ==="
 
 # Kill running instance
-if pgrep -f "whisper-dictation/dictation.py" >/dev/null 2>&1; then
+if pgrep -f "vox/dictation.py" >/dev/null 2>&1; then
     echo "Stopping running instance..."
-    pkill -f "whisper-dictation/dictation.py" || true
+    pkill -f "vox/dictation.py" || true
 fi
 
 echo "Removing files..."
-rm -rf "$HOME/.local/share/whisper-dictation"
-rm -f "$HOME/.local/bin/whisper-dictation"
-rm -f "$HOME/.config/autostart/whisper-dictation.desktop"
+rm -rf "$HOME/.local/share/vox"
+rm -f "$HOME/.local/bin/vox"
+rm -f "$HOME/.config/autostart/vox.desktop"
 
-echo "Done. Whisper Dictation has been removed."
+echo "Done. Vox has been removed."

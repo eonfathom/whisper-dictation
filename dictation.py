@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Whisper Dictation - Hold Ctrl+Win, speak, release to type.
+Vox - Hold Ctrl+Win, speak, release to type.
 
 Cross-platform push-to-talk dictation (Linux/X11 + Windows). Hold Ctrl+Win to
 record, release to stop, transcribe, and paste the result wherever your cursor is.
@@ -505,7 +505,7 @@ def main():
     load_model()
 
     print("", flush=True)
-    print("=== Whisper Dictation ready ===", flush=True)
+    print("=== Vox ready ===", flush=True)
     print(f"  Model:  {MODEL_SIZE}", flush=True)
     print(f"  Device: {DEVICE} ({COMPUTE_TYPE})", flush=True)
     if HOTWORDS or CORRECTIONS:

@@ -1,15 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
-# Whisper Dictation installer
+# Vox installer
 # Sets up venv, installs dependencies, creates launcher and autostart entry.
 
-INSTALL_DIR="$HOME/.local/share/whisper-dictation"
-LAUNCHER="$HOME/.local/bin/whisper-dictation"
-AUTOSTART="$HOME/.config/autostart/whisper-dictation.desktop"
+INSTALL_DIR="$HOME/.local/share/vox"
+LAUNCHER="$HOME/.local/bin/vox"
+AUTOSTART="$HOME/.config/autostart/vox.desktop"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "=== Whisper Dictation Installer ==="
+echo "=== Vox Installer ==="
 echo ""
 
 # --- Check system dependencies ---
@@ -92,7 +92,7 @@ mkdir -p "$(dirname "$AUTOSTART")"
 cat > "$AUTOSTART" <<DESKTOP_EOF
 [Desktop Entry]
 Type=Application
-Name=Whisper Dictation
+Name=Vox
 Comment=Hold Ctrl+Win to dictate with Whisper
 Exec=$LAUNCHER
 Hidden=false
