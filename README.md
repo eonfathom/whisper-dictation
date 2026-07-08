@@ -84,6 +84,16 @@ Then, on either platform:
 2. Speak
 3. Release **Ctrl+Win** — audio is transcribed and pasted at your cursor
 
+## Managing Vox
+
+Vox runs windowless, so use the bundled control script from the repo folder:
+
+```powershell
+.\vox.ps1 restart   # reload after editing dictionary.json (also: start / stop / status)
+```
+
+`stop` frees the model's VRAM if you need the GPU for something else; `start` brings it back. If PowerShell blocks it: `powershell -ExecutionPolicy Bypass -File .\vox.ps1 restart`.
+
 ## Configuration
 
 Configuration is via environment variables.
