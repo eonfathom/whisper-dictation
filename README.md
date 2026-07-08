@@ -93,7 +93,7 @@ Configuration is via environment variables.
 
 | Variable | Default | Description |
 |---|---|---|
-| `WHISPER_MODEL` | `base` | Model size: `tiny`, `base`, `small`, `medium`, `large-v3` |
+| `WHISPER_MODEL` | auto | `large-v3` on a CUDA GPU, `base` on CPU. Override with `tiny`/`base`/`small`/`medium`/`large-v3` |
 | `WHISPER_LANG` | `en` | Language code (`en`, `es`, `fr`, …) or empty for auto-detect |
 | `WHISPER_HOTKEY` | `ctrl+win` | Push-to-talk chord; `+`-joined modifiers from `ctrl`, `alt`, `win`, `shift` |
 | `WHISPER_BEAM` | `5` | Decoding beam width; higher = more accurate, a bit slower. Use `1` on a slow CPU |
@@ -119,10 +119,10 @@ $env:WHISPER_MODEL="tiny"; $env:WHISPER_DEVICE="cpu"; .\run-windows.ps1
 | Model | Speed | Accuracy | VRAM | Good for |
 |---|---|---|---|---|
 | `tiny` | Fastest | Good for clear speech | ~1 GB | Weak CPUs |
-| `base` | Fast | Good balance (recommended) | ~1 GB | Default; CPU laptops |
+| `base` | Fast | Good balance | ~1 GB | Default on CPU-only machines |
 | `small` | Moderate | Better accuracy | ~2 GB | CPU laptops wanting accuracy |
 | `medium` | Slow | High accuracy | ~5 GB | Mid-range GPUs |
-| `large-v3` | Slowest | Best accuracy | ~10 GB | Strong GPUs (12 GB+) |
+| `large-v3` | Slowest | Best accuracy | ~3 GB (fp16) | Default on any CUDA GPU |
 
 On a CPU-only laptop, stick to `base` or `small`. On a GPU with 10 GB+ VRAM, `large-v3` gives the best accuracy at no real speed cost.
 
@@ -161,7 +161,7 @@ sudo usermod -aG input $USER
 
 ### Nothing happens / CUDA errors (Windows)
 
-- **First run is slow** — it downloads the model (~140 MB for `base`) and warms up CUDA.
+- **First run is slow** — it downloads the model (~140 MB for `base`, ~1.5 GB for the GPU default `large-v3`) and warms up CUDA.
 - **`cublas64_12.dll ... cannot be loaded`** — the CUDA libraries aren't installed. Run `.\install-windows.ps1` again, or `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 nvidia-cuda-runtime-cu12` into the venv. The app adds these to the DLL search path automatically at startup.
 - **Pastes into the wrong place** — the text is pasted into whatever window has focus when you release Ctrl+Win. Keep your cursor where you want the text.
 - **Windows key opens the Start menu** — releasing the Win key on its own can pop the Start menu. Press Ctrl a moment before Win, or choose another chord: `WHISPER_HOTKEY=ctrl+alt` (or `ctrl+shift`).

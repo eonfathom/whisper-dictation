@@ -44,7 +44,7 @@ else:
     from evdev import ecodes
 
 # --- Configuration (override via environment variables) ---
-MODEL_SIZE = os.environ.get("WHISPER_MODEL", "base")
+# MODEL_SIZE is resolved below, after the device is detected (it is device-aware).
 LANGUAGE = os.environ.get("WHISPER_LANG", "en")
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -152,6 +152,14 @@ def detect_device():
 
 
 DEVICE, COMPUTE_TYPE = detect_device()
+
+# Model default is device-aware, so one zero-config setup works everywhere:
+# large-v3 on a CUDA GPU (best accuracy, and the GPU keeps it real-time), but
+# base on a CPU-only machine (large-v3 is far too slow on CPU for live
+# dictation). Override anytime with WHISPER_MODEL.
+MODEL_SIZE = os.environ.get("WHISPER_MODEL") or (
+    "large-v3" if DEVICE == "cuda" else "base"
+)
 
 
 # --- Personal dictionary ------------------------------------------------------
