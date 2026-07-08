@@ -4,7 +4,7 @@ Vox - Hold Ctrl+Win, speak, release to type.
 
 Cross-platform push-to-talk dictation (Linux/X11 + Windows). Hold Ctrl+Win to
 record, release to stop, transcribe, and paste the result wherever your cursor is.
-The chord is configurable via WHISPER_HOTKEY (e.g. "ctrl+alt", "ctrl+shift").
+The chord is configurable via VOX_HOTKEY (e.g. "ctrl+alt", "ctrl+shift").
 
   Linux   : evdev for global hotkeys, xclip/xdotool for clipboard paste.
             User must be in the 'input' group.
@@ -45,32 +45,40 @@ else:
 
 # --- Configuration (override via environment variables) ---
 # MODEL_SIZE is resolved below, after the device is detected (it is device-aware).
-LANGUAGE = os.environ.get("WHISPER_LANG", "en")
+LANGUAGE = os.environ.get("VOX_LANG", "en")
 SAMPLE_RATE = 16000
 CHANNELS = 1
 
+# Optional LLM cleanup pass (Wispr-style). Off by default. Set VOX_LLM=anthropic
+# (with an ANTHROPIC_API_KEY) to polish the raw transcript with Claude before it's
+# typed. Any failure/offline falls back to the raw text - a dictation is never lost.
+# Model defaults to fast Haiku for low latency; override with VOX_LLM_MODEL.
+LLM_BACKEND = os.environ.get("VOX_LLM", "off").lower()
+LLM_MODEL = os.environ.get("VOX_LLM_MODEL", "claude-haiku-4-5")
+LLM_TIMEOUT = float(os.environ.get("VOX_LLM_TIMEOUT", "8"))
+
 # Push-to-talk chord: hold all these modifiers together to record. Override via
-# WHISPER_HOTKEY, e.g. "ctrl+alt" or "ctrl+shift". Supported modifiers:
+# VOX_HOTKEY, e.g. "ctrl+alt" or "ctrl+shift". Supported modifiers:
 # ctrl, alt, win, shift  ("win" is the Windows/Super key).
 HOTKEY_MODS = tuple(
     m for m in (t.strip().lower() for t in
-                os.environ.get("WHISPER_HOTKEY", "ctrl+win").split("+")) if m
+                os.environ.get("VOX_HOTKEY", "ctrl+win").split("+")) if m
 ) or ("ctrl", "win")
 HOTKEY_LABEL = "+".join(m.capitalize() for m in HOTKEY_MODS)
 
 # Trailing-audio robustness (seconds, override via env): capture a short grace
 # tail after release so the last word isn't clipped, and pad the buffer with
 # silence so Whisper reliably finalizes the final segment.
-RELEASE_TAIL_SEC = float(os.environ.get("WHISPER_RELEASE_TAIL", "0.2"))
-TRAILING_PAD_SEC = float(os.environ.get("WHISPER_PAD", "0.4"))
+RELEASE_TAIL_SEC = float(os.environ.get("VOX_RELEASE_TAIL", "0.2"))
+TRAILING_PAD_SEC = float(os.environ.get("VOX_PAD", "0.4"))
 
 # Decoding beam width. Higher = more accurate, a bit slower. 5 is Whisper's
 # standard default; drop to 1 on a slow CPU if latency matters more than accuracy.
-BEAM_SIZE = int(os.environ.get("WHISPER_BEAM", "5"))
+BEAM_SIZE = int(os.environ.get("VOX_BEAM", "5"))
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DICT_PATH = os.environ.get(
-    "WHISPER_DICT", os.path.join(SCRIPT_DIR, "dictionary.json")
+    "VOX_DICT", os.path.join(SCRIPT_DIR, "dictionary.json")
 )
 
 # Prompt that encourages proper punctuation from whisper
@@ -133,11 +141,11 @@ _add_cuda_dll_dirs()  # before ctranslate2 is imported in detect_device()
 def detect_device():
     """Pick (device, compute_type): honor env override, else CUDA if available, else CPU.
 
-    Set WHISPER_DEVICE / WHISPER_COMPUTE to override. Auto-detection means the
+    Set VOX_DEVICE / VOX_COMPUTE to override. Auto-detection means the
     same code runs on a CUDA desktop and an Intel laptop with no config changes.
     """
-    dev = os.environ.get("WHISPER_DEVICE")
-    compute = os.environ.get("WHISPER_COMPUTE")
+    dev = os.environ.get("VOX_DEVICE")
+    compute = os.environ.get("VOX_COMPUTE")
     if dev:
         if not compute:
             compute = "float16" if dev == "cuda" else "int8"
@@ -156,8 +164,8 @@ DEVICE, COMPUTE_TYPE = detect_device()
 # Model default is device-aware, so one zero-config setup works everywhere:
 # large-v3 on a CUDA GPU (best accuracy, and the GPU keeps it real-time), but
 # base on a CPU-only machine (large-v3 is far too slow on CPU for live
-# dictation). Override anytime with WHISPER_MODEL.
-MODEL_SIZE = os.environ.get("WHISPER_MODEL") or (
+# dictation). Override anytime with VOX_MODEL.
+MODEL_SIZE = os.environ.get("VOX_MODEL") or (
     "large-v3" if DEVICE == "cuda" else "base"
 )
 
@@ -208,17 +216,51 @@ def clean_text(text):
     return text.strip()
 
 
+def llm_format(text):
+    """Optional Wispr-style cleanup: polish the raw transcript with an LLM.
+
+    Enabled only when VOX_LLM="anthropic". Fixes grammar/punctuation/capitalization,
+    drops fillers and false starts, and obeys spoken commands ("new paragraph",
+    "scratch that"). On a missing key, offline, timeout, or any error it returns the
+    input unchanged, so a dictation is never lost. Uses the official Anthropic SDK.
+    """
+    if LLM_BACKEND != "anthropic" or not text.strip():
+        return text
+    try:
+        import anthropic
+        client = anthropic.Anthropic(max_retries=0, timeout=LLM_TIMEOUT)
+        keep = ""
+        if HOTWORDS:
+            keep = " Preserve these terms verbatim if present: " + ", ".join(HOTWORDS) + "."
+        msg = client.messages.create(
+            model=LLM_MODEL,
+            max_tokens=4000,
+            system=(
+                "You are a dictation cleanup engine. Turn raw speech-to-text into "
+                "polished written text: fix capitalization, punctuation, and obvious "
+                "mis-transcriptions; remove fillers and false starts; honor spoken "
+                "commands (new paragraph, new line, scratch that). Output ONLY the "
+                "cleaned text - no preamble, quotes, or commentary." + keep
+            ),
+            messages=[{"role": "user", "content": text}],
+        )
+        cleaned = "".join(b.text for b in msg.content if b.type == "text").strip()
+        return cleaned or text
+    except Exception as e:
+        print(f">> LLM cleanup skipped ({e.__class__.__name__}); using raw text",
+              flush=True)
+        return text
+
+
 def post_process(text):
     """Transform a raw transcript into final text via an ordered pipeline.
 
-    Stage order matters. New stages (e.g. a local-LLM formatting pass, or
-    app-aware context) slot in at the marked point below.
+    Order matters: clean first, then the optional LLM pass, then personal-dictionary
+    corrections LAST so they always win (e.g. Rokid) even over the LLM's rewrite.
     """
     text = clean_text(text)          # 1. strip fillers, tidy spacing
-    text = apply_corrections(text)   # 2. personal-dictionary corrections
-    # --- Phase 2 insertion point -------------------------------------------
-    # text = llm_format(text, context=active_app())   # formatting + commands
-    # -----------------------------------------------------------------------
+    text = llm_format(text)          # 2. optional LLM cleanup (off by default)
+    text = apply_corrections(text)   # 3. personal-dictionary corrections (final say)
     return text
 
 
@@ -508,6 +550,8 @@ def main():
     print("=== Vox ready ===", flush=True)
     print(f"  Model:  {MODEL_SIZE}", flush=True)
     print(f"  Device: {DEVICE} ({COMPUTE_TYPE})", flush=True)
+    if LLM_BACKEND != "off":
+        print(f"  LLM cleanup: {LLM_BACKEND} ({LLM_MODEL})", flush=True)
     if HOTWORDS or CORRECTIONS:
         print(f"  Dictionary: {len(HOTWORDS)} hotwords, "
               f"{len(CORRECTIONS)} corrections", flush=True)

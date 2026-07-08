@@ -89,30 +89,43 @@ Then, on either platform:
 Configuration is via environment variables.
 
 - Linux: set them in your shell profile or before launching.
-- Windows: set them before launching, e.g. `$env:WHISPER_MODEL = "large-v3"` then `.\run-windows.ps1`.
+- Windows: set them before launching, e.g. `$env:VOX_MODEL = "large-v3"` then `.\run-windows.ps1`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `WHISPER_MODEL` | auto | `large-v3` on a CUDA GPU, `base` on CPU. Override with `tiny`/`base`/`small`/`medium`/`large-v3` |
-| `WHISPER_LANG` | `en` | Language code (`en`, `es`, `fr`, …) or empty for auto-detect |
-| `WHISPER_HOTKEY` | `ctrl+win` | Push-to-talk chord; `+`-joined modifiers from `ctrl`, `alt`, `win`, `shift` |
-| `WHISPER_BEAM` | `5` | Decoding beam width; higher = more accurate, a bit slower. Use `1` on a slow CPU |
-| `WHISPER_RELEASE_TAIL` | `0.2` | Seconds to keep recording after release so trailing words aren't clipped |
-| `WHISPER_PAD` | `0.4` | Seconds of trailing silence padded onto the buffer so Whisper finalizes the last segment |
-| `WHISPER_DEVICE` | auto | Auto-detected: `cuda` if a GPU is present, else `cpu`. Override with `cuda`/`cpu`. |
-| `WHISPER_COMPUTE` | auto | `float16` on GPU, `int8` on CPU. Override with `float16`/`int8`/`float32`. |
-| `WHISPER_DICT` | `dictionary.json` | Path to the personal dictionary file |
+| `VOX_MODEL` | auto | `large-v3` on a CUDA GPU, `base` on CPU. Override with `tiny`/`base`/`small`/`medium`/`large-v3` |
+| `VOX_LANG` | `en` | Language code (`en`, `es`, `fr`, …) or empty for auto-detect |
+| `VOX_HOTKEY` | `ctrl+win` | Push-to-talk chord; `+`-joined modifiers from `ctrl`, `alt`, `win`, `shift` |
+| `VOX_BEAM` | `5` | Decoding beam width; higher = more accurate, a bit slower. Use `1` on a slow CPU |
+| `VOX_RELEASE_TAIL` | `0.2` | Seconds to keep recording after release so trailing words aren't clipped |
+| `VOX_PAD` | `0.4` | Seconds of trailing silence padded onto the buffer so Whisper finalizes the last segment |
+| `VOX_DEVICE` | auto | Auto-detected: `cuda` if a GPU is present, else `cpu`. Override with `cuda`/`cpu`. |
+| `VOX_COMPUTE` | auto | `float16` on GPU, `int8` on CPU. Override with `float16`/`int8`/`float32`. |
+| `VOX_DICT` | `dictionary.json` | Path to the personal dictionary file |
+| `VOX_LLM` | `off` | Optional LLM cleanup pass. Set to `anthropic` to polish transcripts with Claude (needs `ANTHROPIC_API_KEY`) |
+| `VOX_LLM_MODEL` | `claude-haiku-4-5` | Model for the cleanup pass (fast Haiku by default) |
 
 Example — force the tiny model on CPU:
 
 ```bash
 # Linux
-WHISPER_MODEL=tiny WHISPER_DEVICE=cpu vox
+VOX_MODEL=tiny VOX_DEVICE=cpu vox
 ```
 ```powershell
 # Windows
-$env:WHISPER_MODEL="tiny"; $env:WHISPER_DEVICE="cpu"; .\run-windows.ps1
+$env:VOX_MODEL="tiny"; $env:VOX_DEVICE="cpu"; .\run-windows.ps1
 ```
+
+### Optional: LLM cleanup (Wispr-style polish)
+
+By default Vox types the raw (offline) transcript. For Wispr-Flow-style polish — grammar, punctuation, removed filler, and spoken commands like "new paragraph" / "scratch that" — enable an LLM pass:
+
+```powershell
+setx ANTHROPIC_API_KEY sk-ant-...   # your Anthropic API key
+setx VOX_LLM anthropic
+```
+
+Restart Vox. It runs the raw transcript through Claude (fast **Haiku** by default; set `VOX_LLM_MODEL` to change) before typing, via the official `anthropic` SDK (`pip install anthropic`). It's **fully fail-safe**: no key, no internet, a timeout, or any error falls back to the raw transcript, so a dictation is never lost — offline (e.g. on a plane) it silently skips the pass. Your personal `dictionary.json` corrections still run last, so brand terms like Rokid always survive.
 
 ### Model size guide
 
@@ -164,12 +177,12 @@ sudo usermod -aG input $USER
 - **First run is slow** — it downloads the model (~140 MB for `base`, ~1.5 GB for the GPU default `large-v3`) and warms up CUDA.
 - **`cublas64_12.dll ... cannot be loaded`** — the CUDA libraries aren't installed. Run `.\install-windows.ps1` again, or `pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 nvidia-cuda-runtime-cu12` into the venv. The app adds these to the DLL search path automatically at startup.
 - **Pastes into the wrong place** — the text is pasted into whatever window has focus when you release Ctrl+Win. Keep your cursor where you want the text.
-- **Windows key opens the Start menu** — releasing the Win key on its own can pop the Start menu. Press Ctrl a moment before Win, or choose another chord: `WHISPER_HOTKEY=ctrl+alt` (or `ctrl+shift`).
-- **No GPU?** That's fine — it runs on CPU automatically. Use `WHISPER_MODEL=base` or `small` for reasonable speed.
+- **Windows key opens the Start menu** — releasing the Win key on its own can pop the Start menu. Press Ctrl a moment before Win, or choose another chord: `VOX_HOTKEY=ctrl+alt` (or `ctrl+shift`).
+- **No GPU?** That's fine — it runs on CPU automatically. Use `VOX_MODEL=base` or `small` for reasonable speed.
 
 ### Slow transcription
 
-- Use a smaller model: `WHISPER_MODEL=tiny` (or `base`/`small` on CPU).
+- Use a smaller model: `VOX_MODEL=tiny` (or `base`/`small` on CPU).
 - Confirm the device: the startup banner prints `Device: cuda` or `Device: cpu`.
 
 ## Uninstall
@@ -197,7 +210,7 @@ This project was inspired by [Whisper Writer](https://github.com/savbell/whisper
 | **Text output** | Clipboard paste (instant) | Keystroke simulation (slow, known bugs with duplicated/missing chars) |
 | **Post-processing** | Filler removal, punctuation cleanup, personal dictionary | Trailing space/period removal only |
 | **Recording modes** | Hold-to-record | Continuous, VAD, press-to-toggle, hold-to-record |
-| **Hotkey** | Ctrl+Win, configurable via `WHISPER_HOTKEY` (evdev on Linux, pynput on Windows) | Configurable chord (evdev or pynput) |
+| **Hotkey** | Ctrl+Win, configurable via `VOX_HOTKEY` (evdev on Linux, pynput on Windows) | Configurable chord (evdev or pynput) |
 | **Configuration** | Environment variables + `dictionary.json` | YAML config + settings GUI |
 | **STT backend** | faster-whisper (local) | faster-whisper (local) + OpenAI API |
 | **Platforms** | Linux/X11 + Windows | Linux, macOS, Windows |
