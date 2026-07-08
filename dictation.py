@@ -64,6 +64,10 @@ HOTKEY_LABEL = "+".join(m.capitalize() for m in HOTKEY_MODS)
 RELEASE_TAIL_SEC = float(os.environ.get("WHISPER_RELEASE_TAIL", "0.2"))
 TRAILING_PAD_SEC = float(os.environ.get("WHISPER_PAD", "0.4"))
 
+# Decoding beam width. Higher = more accurate, a bit slower. 5 is Whisper's
+# standard default; drop to 1 on a slow CPU if latency matters more than accuracy.
+BEAM_SIZE = int(os.environ.get("WHISPER_BEAM", "5"))
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DICT_PATH = os.environ.get(
     "WHISPER_DICT", os.path.join(SCRIPT_DIR, "dictionary.json")
@@ -377,7 +381,7 @@ def stop_and_transcribe():
     if HOTWORDS and supports_hotwords:
         kwargs["hotwords"] = " ".join(HOTWORDS)
     segments, info = model.transcribe(
-        audio, beam_size=1, vad_filter=True,
+        audio, beam_size=BEAM_SIZE, vad_filter=True,
         condition_on_previous_text=False,
         initial_prompt=INITIAL_PROMPT, **kwargs,
     )

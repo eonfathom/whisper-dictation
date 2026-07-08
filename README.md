@@ -96,6 +96,9 @@ Configuration is via environment variables.
 | `WHISPER_MODEL` | `base` | Model size: `tiny`, `base`, `small`, `medium`, `large-v3` |
 | `WHISPER_LANG` | `en` | Language code (`en`, `es`, `fr`, …) or empty for auto-detect |
 | `WHISPER_HOTKEY` | `ctrl+win` | Push-to-talk chord; `+`-joined modifiers from `ctrl`, `alt`, `win`, `shift` |
+| `WHISPER_BEAM` | `5` | Decoding beam width; higher = more accurate, a bit slower. Use `1` on a slow CPU |
+| `WHISPER_RELEASE_TAIL` | `0.2` | Seconds to keep recording after release so trailing words aren't clipped |
+| `WHISPER_PAD` | `0.4` | Seconds of trailing silence padded onto the buffer so Whisper finalizes the last segment |
 | `WHISPER_DEVICE` | auto | Auto-detected: `cuda` if a GPU is present, else `cpu`. Override with `cuda`/`cpu`. |
 | `WHISPER_COMPUTE` | auto | `float16` on GPU, `int8` on CPU. Override with `float16`/`int8`/`float32`. |
 | `WHISPER_DICT` | `dictionary.json` | Path to the personal dictionary file |
