@@ -67,10 +67,18 @@ HOTKEY_MODS = tuple(
 HOTKEY_LABEL = "+".join(m.capitalize() for m in HOTKEY_MODS)
 
 # Trailing-audio robustness (seconds, override via env): capture a short grace
-# tail after release so the last word isn't clipped, and pad the buffer with
-# silence so Whisper reliably finalizes the final segment.
+# tail after release so the last word isn't clipped, and pad the buffer with a
+# little silence so Whisper reliably finalizes the final segment. Keep the pad
+# small - a long silent tail invites Whisper to hallucinate the primed hotwords.
 RELEASE_TAIL_SEC = float(os.environ.get("VOX_RELEASE_TAIL", "0.2"))
-TRAILING_PAD_SEC = float(os.environ.get("VOX_PAD", "0.4"))
+TRAILING_PAD_SEC = float(os.environ.get("VOX_PAD", "0.15"))
+
+# Strip a hallucinated trailing run of hotwords/proper nouns that Whisper can
+# regurgitate over the silent tail after you stop speaking. On by default;
+# set VOX_STRIP_PHANTOMS=0 to disable.
+STRIP_PHANTOMS = os.environ.get("VOX_STRIP_PHANTOMS", "1").lower() not in (
+    "0", "false", "off", "no",
+)
 
 # Decoding beam width. Higher = more accurate, a bit slower. 5 is Whisper's
 # standard default; drop to 1 on a slow CPU if latency matters more than accuracy.
@@ -197,6 +205,12 @@ _CORRECTION_RES = [
     (re.compile(r"\b" + re.escape(wrong) + r"\b", re.IGNORECASE), right)
     for wrong, right in CORRECTIONS.items()
 ]
+# Individual words from every hotword entry ("Claude Code" -> claude, code),
+# used to detect a hallucinated trailing run of hotwords.
+_HOTWORD_TOKENS = {
+    w for hw in HOTWORDS for w in re.split(r"[\s\-]+", hw.lower()) if w
+}
+_NAMELIKE_RE = re.compile(r"^[A-Z][\w'\-]*$")
 
 
 def apply_corrections(text):
@@ -204,6 +218,40 @@ def apply_corrections(text):
     for pattern, right in _CORRECTION_RES:
         text = pattern.sub(right, text)
     return text
+
+
+def strip_trailing_phantoms(text):
+    """Remove a hallucinated trailing run of hotwords/proper nouns.
+
+    When you stop talking, Whisper can regurgitate the words it was primed with
+    (hotwords + initial prompt) over the trailing silence, appending phantoms
+    like "Fathom Claude" after your real sentence. This strips that tail, but
+    only in the telltale shape: a completed sentence (ends in . ! ?) followed by
+    nothing but capitalized / hotword tokens, at least one of which is a hotword.
+    So real endings survive - "I love Claude." (hotword before the period),
+    "email Michael" (no terminator), and any sentence containing a normal
+    lowercase word are all left untouched. Disable with VOX_STRIP_PHANTOMS=0.
+    """
+    if not STRIP_PHANTOMS or not HOTWORDS or not text:
+        return text
+    stripped = text.rstrip()
+    idx = max((stripped.rfind(c) for c in ".!?"), default=-1)
+    if idx < 0 or idx == len(stripped) - 1:
+        return text  # no completed sentence, or nothing trails it
+    head = stripped[: idx + 1]
+    tail = stripped[idx + 1:].strip()
+    if not head.strip(".!? ") or not tail:
+        return text  # need real words before the terminator, and a tail to test
+    has_hotword = False
+    for tok in re.split(r"[,\s]+", tail):
+        if not tok:
+            continue
+        word = tok.strip(".,!?;:'\"").lower()
+        if word in _HOTWORD_TOKENS:
+            has_hotword = True
+        elif not _NAMELIKE_RE.match(tok):
+            return text  # a normal lowercase word -> this is real speech, keep it
+    return head if has_hotword else text
 
 
 def clean_text(text):
@@ -255,12 +303,14 @@ def llm_format(text):
 def post_process(text):
     """Transform a raw transcript into final text via an ordered pipeline.
 
-    Order matters: clean first, then the optional LLM pass, then personal-dictionary
+    Order matters: clean, drop hallucinated trailing hotwords (before the LLM, so
+    it can't "preserve" them), then the optional LLM pass, then personal-dictionary
     corrections LAST so they always win (e.g. Rokid) even over the LLM's rewrite.
     """
-    text = clean_text(text)          # 1. strip fillers, tidy spacing
-    text = llm_format(text)          # 2. optional LLM cleanup (off by default)
-    text = apply_corrections(text)   # 3. personal-dictionary corrections (final say)
+    text = clean_text(text)               # 1. strip fillers, tidy spacing
+    text = strip_trailing_phantoms(text)  # 2. drop hallucinated trailing hotwords
+    text = llm_format(text)               # 3. optional LLM cleanup (off by default)
+    text = apply_corrections(text)        # 4. personal-dictionary corrections (final say)
     return text
 
 
