@@ -46,7 +46,7 @@ if ($hasGpu) {
     Write-Host "NVIDIA GPU detected - installing CUDA libraries (cuBLAS, cuDNN, cudart)..." -ForegroundColor Green
     & $python -m pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 nvidia-cuda-runtime-cu12
 } else {
-    Write-Host "No NVIDIA GPU detected - CPU mode (int8). Recommend WHISPER_MODEL=small or base." -ForegroundColor Yellow
+    Write-Host "No NVIDIA GPU detected - CPU mode (int8). Recommend VOX_MODEL=small or base." -ForegroundColor Yellow
 }
 
 # --- Optional autostart ---
