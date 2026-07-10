@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/vox-logo.svg" alt="Vox" width="480">
+</p>
+
 # Vox
 
 Push-to-talk dictation for **Linux and Windows**. Hold **Ctrl+Win** to record, release to transcribe and paste the result wherever your cursor is.
