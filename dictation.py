@@ -21,6 +21,8 @@ Requires: faster-whisper, sounddevice, numpy
 
 import inspect
 import json
+import logging
+import logging.handlers
 import os
 import re
 import sys
@@ -84,6 +86,13 @@ STRIP_PHANTOMS = os.environ.get("VOX_STRIP_PHANTOMS", "1").lower() not in (
 # standard default; drop to 1 on a slow CPU if latency matters more than accuracy.
 BEAM_SIZE = int(os.environ.get("VOX_BEAM", "5"))
 
+# Optional daily transcript record: point VOX_TRANSCRIPT_DIR at a directory
+# (e.g. a folder inside an Obsidian vault) and the final text of every
+# dictation is appended to a per-day markdown file there ("YYYY-MM-DD vox.md",
+# one "- **HH:MM** text" bullet per dictation). Unset = off. Writing is
+# best-effort: a failure is logged and never blocks the paste.
+TRANSCRIPT_DIR = os.environ.get("VOX_TRANSCRIPT_DIR", "")
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DICT_PATH = os.environ.get(
     "VOX_DICT", os.path.join(SCRIPT_DIR, "dictionary.json")
@@ -104,6 +113,50 @@ FILLERS = [
     " um ", " Um ", " uh ", " Uh ",
     " um.", " uh.",
 ]
+
+
+# --- Diagnostic log -------------------------------------------------------------
+def _make_logger():
+    """File logger so windowless runs are diagnosable after the fact.
+
+    Under pythonw.exe there is no stdout - every print() is silently discarded -
+    so a mangled dictation used to leave no trace. A small rotating file
+    (512 KB x 2) captures per-dictation diagnostics: duration/samples captured,
+    the raw transcript, anything stripped or recovered, and the final text.
+    Default %LOCALAPPDATA%\\vox\\vox.log (Linux: ~/.local/state/vox/vox.log);
+    override the path with VOX_LOG, disable with VOX_LOG=0.
+    """
+    dest = os.environ.get("VOX_LOG", "")
+    if dest.lower() in ("0", "false", "off", "no"):
+        return None
+    if not dest:
+        base = (os.environ.get("LOCALAPPDATA") if IS_WINDOWS else None
+                ) or os.path.expanduser("~/.local/state")
+        dest = os.path.join(base, "vox", "vox.log")
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(
+            dest, maxBytes=512 * 1024, backupCount=2, encoding="utf-8"
+        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        logger = logging.getLogger("vox")
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        return logger
+    except OSError:
+        return None
+
+
+_LOGGER = _make_logger()
+
+
+def log(msg):
+    """Print to the console (visible when run via python) and the log file
+    (the only record under pythonw, which has no stdout)."""
+    print(msg, flush=True)
+    if _LOGGER is not None:
+        _LOGGER.info(msg)
 
 
 def _add_cuda_dll_dirs():
@@ -196,7 +249,7 @@ def load_dictionary():
     except FileNotFoundError:
         pass
     except (json.JSONDecodeError, OSError) as e:
-        print(f"WARNING: could not read dictionary {DICT_PATH}: {e}", flush=True)
+        log(f"WARNING: could not read dictionary {DICT_PATH}: {e}")
     return hotwords, corrections
 
 
@@ -233,7 +286,7 @@ def apply_corrections(text):
     return text
 
 
-def strip_trailing_hotword_run(text):
+def strip_trailing_hotword_run(text, quiet=False):
     """Remove a verbatim echo of the hotword prompt from the end of the text.
 
     Whisper sees the dictionary as one space-joined prompt string on every
@@ -256,7 +309,8 @@ def strip_trailing_hotword_run(text):
         if head and not (head[-1].isspace() or head[-1] in ",;:.!?"):
             continue  # run must start on a word boundary
         head = head.rstrip().rstrip(",;: ")
-        print(f">> Stripped hotword echo from tail: {run!r}", flush=True)
+        if not quiet:
+            log(f">> Stripped hotword echo from tail: {run!r}")
         return head
     return text
 
@@ -292,7 +346,10 @@ def strip_trailing_phantoms(text):
             has_hotword = True
         elif not _NAMELIKE_RE.match(tok):
             return text  # a normal lowercase word -> this is real speech, keep it
-    return head if has_hotword else text
+    if has_hotword:
+        log(f">> Stripped trailing phantoms: {tail!r}")
+        return head
+    return text
 
 
 def clean_text(text):
@@ -341,8 +398,7 @@ def llm_format(text):
         cleaned = "".join(b.text for b in msg.content if b.type == "text").strip()
         return cleaned or text
     except Exception as e:
-        print(f">> LLM cleanup skipped ({e.__class__.__name__}); using raw text",
-              flush=True)
+        log(f">> LLM cleanup skipped ({e.__class__.__name__}); using raw text")
         return text
 
 
@@ -361,9 +417,39 @@ def post_process(text):
     return text
 
 
+def record_transcript(text):
+    """Append the pasted text to a per-day markdown file (VOX_TRANSCRIPT_DIR).
+
+    Creates "<dir>/YYYY-MM-DD vox.md" on the first dictation of the day, with
+    a header linking the day's sibling notes so Obsidian backlinks tie them
+    together. Best-effort by design: any failure is logged and the dictation
+    itself is never delayed or lost (this runs after the paste).
+    """
+    if not TRANSCRIPT_DIR:
+        return
+    try:
+        now = time.localtime()
+        day = time.strftime("%Y-%m-%d", now)
+        path = os.path.join(TRANSCRIPT_DIR, f"{day} vox.md")
+        entry = f"- **{time.strftime('%H:%M', now)}** {text}\n"
+        if not os.path.exists(path):
+            entry = (
+                f"# Vox transcripts — {day}\n\n"
+                f"*Dictated via [vox](https://github.com/eonfathom/vox) · "
+                f"[[Daily transcripts/{day} transcript|Day transcript]] · "
+                f"[[Daily summaries/{day} story|Day story]]*\n\n"
+            ) + entry
+        os.makedirs(TRANSCRIPT_DIR, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception as e:
+        log(f">> Transcript record failed ({e.__class__.__name__}: {e})")
+
+
 # --- Global state ---
 recording = False
 audio_frames = []
+overflow_count = 0
 stream = None
 model = None
 supports_hotwords = False
@@ -454,10 +540,7 @@ def load_model():
     global model, supports_hotwords
     from faster_whisper import WhisperModel
 
-    print(
-        f"Loading model: {MODEL_SIZE} (device={DEVICE}, compute={COMPUTE_TYPE})",
-        flush=True,
-    )
+    log(f"Loading model: {MODEL_SIZE} (device={DEVICE}, compute={COMPUTE_TYPE})")
     model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
     try:
         supports_hotwords = "hotwords" in inspect.signature(
@@ -465,19 +548,24 @@ def load_model():
         ).parameters
     except (ValueError, TypeError):
         supports_hotwords = False
-    print("Model loaded.", flush=True)
+    log("Model loaded.")
 
 
 def start_recording():
     """Start recording audio from the default microphone."""
-    global recording, audio_frames, stream, target_window
+    global recording, audio_frames, overflow_count, stream, target_window
 
     audio_frames = []
+    overflow_count = 0
     target_window = get_active_window()
 
     def callback(indata, frames, time_info, status):
+        # Count under/overflow flags instead of printing: printing from the
+        # audio thread can itself glitch capture, and under pythonw stderr is
+        # None so the old message vanished anyway. Reported at stop.
+        global overflow_count
         if status:
-            print(f"Audio status: {status}", file=sys.stderr, flush=True)
+            overflow_count += 1
         audio_frames.append(indata.copy())
 
     stream = sd.InputStream(
@@ -488,7 +576,22 @@ def start_recording():
     )
     stream.start()
     recording = True
-    print(">> RECORDING - speak now...", flush=True)
+    log(">> RECORDING - speak now...")
+
+
+def transcribe_audio(audio, with_hotwords=True):
+    """One Whisper pass over the buffer; returns the raw joined transcript."""
+    kwargs = {}
+    if LANGUAGE:
+        kwargs["language"] = LANGUAGE
+    if with_hotwords and HOTWORDS and supports_hotwords:
+        kwargs["hotwords"] = " ".join(HOTWORDS)
+    segments, info = model.transcribe(
+        audio, beam_size=BEAM_SIZE, vad_filter=True,
+        condition_on_previous_text=False,
+        initial_prompt=INITIAL_PROMPT, **kwargs,
+    )
+    return " ".join(seg.text for seg in segments).strip()
 
 
 def stop_and_transcribe():
@@ -510,7 +613,7 @@ def stop_and_transcribe():
 
     frames = list(audio_frames)
     if not frames:
-        print(">> No audio captured.", flush=True)
+        log(">> No audio captured.")
         return
 
     audio = np.concatenate(frames, axis=0).flatten()
@@ -520,26 +623,36 @@ def stop_and_transcribe():
         audio = np.concatenate(
             [audio, np.zeros(int(SAMPLE_RATE * TRAILING_PAD_SEC), dtype=audio.dtype)]
         )
-    print(f">> Transcribing {duration:.1f}s of audio...", flush=True)
+    log(f">> Transcribing {duration:.1f}s of audio ({len(frames)} blocks"
+        + (f", {overflow_count} overflow flags" if overflow_count else "")
+        + ")...")
 
-    kwargs = {}
-    if LANGUAGE:
-        kwargs["language"] = LANGUAGE
-    if HOTWORDS and supports_hotwords:
-        kwargs["hotwords"] = " ".join(HOTWORDS)
-    segments, info = model.transcribe(
-        audio, beam_size=BEAM_SIZE, vad_filter=True,
-        condition_on_previous_text=False,
-        initial_prompt=INITIAL_PROMPT, **kwargs,
-    )
-    text = " ".join(seg.text for seg in segments).strip()
+    text = transcribe_audio(audio)
+    log(f">> Raw: {text}")
+
+    # Hotword-prompt echo can REPLACE speech, not just trail it: past ~30s of
+    # speech Whisper decodes in multiple windows, and a window whose decode
+    # derails into the echo consumes its whole span of audio - the last
+    # sentence or two come back as hotword junk. When the echo guard trips,
+    # retranscribe once WITHOUT hotword priming (the echo text is no longer in
+    # the prompt, so the tail decodes normally) and keep whichever result
+    # preserved more real speech. Dictionary corrections still run either way.
+    cleaned = clean_text(text)
+    stripped = strip_trailing_hotword_run(cleaned, quiet=True)
+    if stripped != cleaned:
+        retry = transcribe_audio(audio, with_hotwords=False)
+        log(f">> Echo retry (no hotwords): {retry}")
+        if len(strip_trailing_hotword_run(clean_text(retry), quiet=True)) > len(stripped):
+            text = retry
+
     text = post_process(text)
 
     if text:
-        print(f">> Result: {text}", flush=True)
+        log(f">> Result: {text}")
         type_text(text, target_window)
+        record_transcript(text)
     else:
-        print(">> No speech detected.", flush=True)
+        log(">> No speech detected.")
 
 
 def _set_recording(active):
@@ -644,14 +757,16 @@ def main():
     load_model()
 
     print("", flush=True)
-    print("=== Vox ready ===", flush=True)
-    print(f"  Model:  {MODEL_SIZE}", flush=True)
-    print(f"  Device: {DEVICE} ({COMPUTE_TYPE})", flush=True)
+    log("=== Vox ready ===")
+    log(f"  Model:  {MODEL_SIZE}")
+    log(f"  Device: {DEVICE} ({COMPUTE_TYPE})")
     if LLM_BACKEND != "off":
-        print(f"  LLM cleanup: {LLM_BACKEND} ({LLM_MODEL})", flush=True)
+        log(f"  LLM cleanup: {LLM_BACKEND} ({LLM_MODEL})")
     if HOTWORDS or CORRECTIONS:
-        print(f"  Dictionary: {len(HOTWORDS)} hotwords, "
-              f"{len(CORRECTIONS)} corrections", flush=True)
+        log(f"  Dictionary: {len(HOTWORDS)} hotwords, "
+            f"{len(CORRECTIONS)} corrections")
+    if TRANSCRIPT_DIR:
+        log(f"  Transcript dir: {TRANSCRIPT_DIR}")
     print("", flush=True)
 
     if IS_WINDOWS:

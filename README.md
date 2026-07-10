@@ -112,10 +112,13 @@ Configuration is via environment variables.
 | `VOX_HOTKEY` | `ctrl+win` | Push-to-talk chord; `+`-joined modifiers from `ctrl`, `alt`, `win`, `shift` |
 | `VOX_BEAM` | `5` | Decoding beam width; higher = more accurate, a bit slower. Use `1` on a slow CPU |
 | `VOX_RELEASE_TAIL` | `0.2` | Seconds to keep recording after release so trailing words aren't clipped |
-| `VOX_PAD` | `0.4` | Seconds of trailing silence padded onto the buffer so Whisper finalizes the last segment |
+| `VOX_PAD` | `0.15` | Seconds of trailing silence padded onto the buffer so Whisper finalizes the last segment |
 | `VOX_DEVICE` | auto | Auto-detected: `cuda` if a GPU is present, else `cpu`. Override with `cuda`/`cpu`. |
 | `VOX_COMPUTE` | auto | `float16` on GPU, `int8` on CPU. Override with `float16`/`int8`/`float32`. |
 | `VOX_DICT` | `dictionary.json` | Path to the personal dictionary file |
+| `VOX_STRIP_PHANTOMS` | `1` | Strip hallucinated trailing hotword echoes from the transcript. Set `0` to disable |
+| `VOX_LOG` | auto | Diagnostic log file (rotating, 512 KB × 2). Default `%LOCALAPPDATA%\vox\vox.log` (Linux: `~/.local/state/vox/vox.log`); set a path to move it or `0` to disable |
+| `VOX_TRANSCRIPT_DIR` | unset | Directory (e.g. an Obsidian folder) for a per-day markdown record of everything you dictate (`YYYY-MM-DD vox.md`, one `- **HH:MM** text` bullet per dictation). Unset = off |
 | `VOX_LLM` | `off` | Optional LLM cleanup pass. Set to `anthropic` to polish transcripts with Claude (needs `ANTHROPIC_API_KEY`) |
 | `VOX_LLM_MODEL` | `claude-haiku-4-5` | Model for the cleanup pass (fast Haiku by default) |
 
