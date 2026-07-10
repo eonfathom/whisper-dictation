@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1176 672" width="1176" height="672" role="img" aria-label="Vox">
-  <rect width="1176" height="672" rx="24" fill="#000000"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 672 392" width="672" height="392" role="img" aria-label="Vox">
+  <rect width="672" height="392" rx="24" fill="#000000"/>
   <g fill="#ffffff">
     <circle cx="28" cy="28" r="3.2"/>
     <circle cx="56" cy="28" r="3.2"/>
@@ -24,24 +24,6 @@
     <circle cx="588" cy="28" r="3.2"/>
     <circle cx="616" cy="28" r="3.2"/>
     <circle cx="644" cy="28" r="3.2"/>
-    <circle cx="672" cy="28" r="3.2"/>
-    <circle cx="700" cy="28" r="3.2"/>
-    <circle cx="728" cy="28" r="3.2"/>
-    <circle cx="756" cy="28" r="3.2"/>
-    <circle cx="784" cy="28" r="3.2"/>
-    <circle cx="812" cy="28" r="3.2"/>
-    <circle cx="840" cy="28" r="3.2"/>
-    <circle cx="868" cy="28" r="3.2"/>
-    <circle cx="896" cy="28" r="3.2"/>
-    <circle cx="924" cy="28" r="3.2"/>
-    <circle cx="952" cy="28" r="3.2"/>
-    <circle cx="980" cy="28" r="3.2"/>
-    <circle cx="1008" cy="28" r="3.2"/>
-    <circle cx="1036" cy="28" r="3.2"/>
-    <circle cx="1064" cy="28" r="3.2"/>
-    <circle cx="1092" cy="28" r="3.2"/>
-    <circle cx="1120" cy="28" r="3.2"/>
-    <circle cx="1148" cy="28" r="3.2"/>
     <circle cx="28" cy="56" r="3.2"/>
     <circle cx="56" cy="56" r="3.2"/>
     <circle cx="84" cy="56" r="3.2"/>
@@ -65,24 +47,6 @@
     <circle cx="588" cy="56" r="3.2"/>
     <circle cx="616" cy="56" r="3.2"/>
     <circle cx="644" cy="56" r="3.2"/>
-    <circle cx="672" cy="56" r="3.2"/>
-    <circle cx="700" cy="56" r="3.2"/>
-    <circle cx="728" cy="56" r="3.2"/>
-    <circle cx="756" cy="56" r="3.2"/>
-    <circle cx="784" cy="56" r="3.2"/>
-    <circle cx="812" cy="56" r="3.2"/>
-    <circle cx="840" cy="56" r="3.2"/>
-    <circle cx="868" cy="56" r="3.2"/>
-    <circle cx="896" cy="56" r="3.2"/>
-    <circle cx="924" cy="56" r="3.2"/>
-    <circle cx="952" cy="56" r="3.2"/>
-    <circle cx="980" cy="56" r="3.2"/>
-    <circle cx="1008" cy="56" r="3.2"/>
-    <circle cx="1036" cy="56" r="3.2"/>
-    <circle cx="1064" cy="56" r="3.2"/>
-    <circle cx="1092" cy="56" r="3.2"/>
-    <circle cx="1120" cy="56" r="3.2"/>
-    <circle cx="1148" cy="56" r="3.2"/>
     <circle cx="28" cy="84" r="3.2"/>
     <circle cx="56" cy="84" r="3.2"/>
     <circle cx="84" cy="84" r="3.2"/>
@@ -106,311 +70,167 @@
     <circle cx="588" cy="84" r="3.2"/>
     <circle cx="616" cy="84" r="3.2"/>
     <circle cx="644" cy="84" r="3.2"/>
-    <circle cx="672" cy="84" r="3.2"/>
-    <circle cx="700" cy="84" r="3.2"/>
-    <circle cx="728" cy="84" r="3.2"/>
-    <circle cx="756" cy="84" r="3.2"/>
-    <circle cx="784" cy="84" r="3.2"/>
-    <circle cx="812" cy="84" r="3.2"/>
-    <circle cx="840" cy="84" r="3.2"/>
-    <circle cx="868" cy="84" r="3.2"/>
-    <circle cx="896" cy="84" r="3.2"/>
-    <circle cx="924" cy="84" r="3.2"/>
-    <circle cx="952" cy="84" r="3.2"/>
-    <circle cx="980" cy="84" r="3.2"/>
-    <circle cx="1008" cy="84" r="3.2"/>
-    <circle cx="1036" cy="84" r="3.2"/>
-    <circle cx="1064" cy="84" r="3.2"/>
-    <circle cx="1092" cy="84" r="3.2"/>
-    <circle cx="1120" cy="84" r="3.2"/>
-    <circle cx="1148" cy="84" r="3.2"/>
     <circle cx="28" cy="112" r="3.2"/>
     <circle cx="56" cy="112" r="3.2"/>
-    <circle cx="84" cy="112" r="3.2"/>
-    <circle cx="112" cy="112" r="3.2"/>
-    <circle cx="140" cy="112" r="3.2"/>
+    <circle cx="84" cy="112" r="6.6"/>
+    <circle cx="112" cy="112" r="6.6"/>
+    <circle cx="140" cy="112" r="6.6"/>
     <circle cx="168" cy="112" r="3.2"/>
-    <circle cx="196" cy="112" r="3.2"/>
-    <circle cx="224" cy="112" r="3.2"/>
-    <circle cx="252" cy="112" r="3.2"/>
-    <circle cx="280" cy="112" r="3.2"/>
-    <circle cx="308" cy="112" r="3.2"/>
-    <circle cx="336" cy="112" r="3.2"/>
-    <circle cx="364" cy="112" r="3.2"/>
-    <circle cx="392" cy="112" r="3.2"/>
-    <circle cx="420" cy="112" r="3.2"/>
-    <circle cx="448" cy="112" r="3.2"/>
-    <circle cx="476" cy="112" r="3.2"/>
+    <circle cx="196" cy="112" r="6.6"/>
+    <circle cx="224" cy="112" r="6.6"/>
+    <circle cx="252" cy="112" r="6.6"/>
+    <circle cx="280" cy="112" r="6.6"/>
+    <circle cx="308" cy="112" r="6.6"/>
+    <circle cx="336" cy="112" r="6.6"/>
+    <circle cx="364" cy="112" r="6.6"/>
+    <circle cx="392" cy="112" r="6.6"/>
+    <circle cx="420" cy="112" r="6.6"/>
+    <circle cx="448" cy="112" r="6.6"/>
+    <circle cx="476" cy="112" r="6.6"/>
     <circle cx="504" cy="112" r="3.2"/>
-    <circle cx="532" cy="112" r="3.2"/>
-    <circle cx="560" cy="112" r="3.2"/>
-    <circle cx="588" cy="112" r="3.2"/>
+    <circle cx="532" cy="112" r="6.6"/>
+    <circle cx="560" cy="112" r="6.6"/>
+    <circle cx="588" cy="112" r="6.6"/>
     <circle cx="616" cy="112" r="3.2"/>
     <circle cx="644" cy="112" r="3.2"/>
-    <circle cx="672" cy="112" r="3.2"/>
-    <circle cx="700" cy="112" r="3.2"/>
-    <circle cx="728" cy="112" r="3.2"/>
-    <circle cx="756" cy="112" r="3.2"/>
-    <circle cx="784" cy="112" r="3.2"/>
-    <circle cx="812" cy="112" r="3.2"/>
-    <circle cx="840" cy="112" r="3.2"/>
-    <circle cx="868" cy="112" r="3.2"/>
-    <circle cx="896" cy="112" r="3.2"/>
-    <circle cx="924" cy="112" r="3.2"/>
-    <circle cx="952" cy="112" r="3.2"/>
-    <circle cx="980" cy="112" r="3.2"/>
-    <circle cx="1008" cy="112" r="3.2"/>
-    <circle cx="1036" cy="112" r="3.2"/>
-    <circle cx="1064" cy="112" r="3.2"/>
-    <circle cx="1092" cy="112" r="3.2"/>
-    <circle cx="1120" cy="112" r="3.2"/>
-    <circle cx="1148" cy="112" r="3.2"/>
     <circle cx="28" cy="140" r="3.2"/>
     <circle cx="56" cy="140" r="3.2"/>
-    <circle cx="84" cy="140" r="3.2"/>
-    <circle cx="112" cy="140" r="3.2"/>
-    <circle cx="140" cy="140" r="3.2"/>
+    <circle cx="84" cy="140" r="6.6"/>
+    <circle cx="112" cy="140" r="10.6"/>
+    <circle cx="140" cy="140" r="6.6"/>
     <circle cx="168" cy="140" r="3.2"/>
-    <circle cx="196" cy="140" r="3.2"/>
-    <circle cx="224" cy="140" r="3.2"/>
-    <circle cx="252" cy="140" r="3.2"/>
-    <circle cx="280" cy="140" r="3.2"/>
-    <circle cx="308" cy="140" r="3.2"/>
-    <circle cx="336" cy="140" r="3.2"/>
-    <circle cx="364" cy="140" r="3.2"/>
-    <circle cx="392" cy="140" r="3.2"/>
-    <circle cx="420" cy="140" r="3.2"/>
-    <circle cx="448" cy="140" r="3.2"/>
-    <circle cx="476" cy="140" r="3.2"/>
-    <circle cx="504" cy="140" r="3.2"/>
-    <circle cx="532" cy="140" r="3.2"/>
-    <circle cx="560" cy="140" r="3.2"/>
-    <circle cx="588" cy="140" r="3.2"/>
+    <circle cx="196" cy="140" r="6.6"/>
+    <circle cx="224" cy="140" r="10.6"/>
+    <circle cx="252" cy="140" r="6.6"/>
+    <circle cx="280" cy="140" r="6.6"/>
+    <circle cx="308" cy="140" r="10.6"/>
+    <circle cx="336" cy="140" r="10.6"/>
+    <circle cx="364" cy="140" r="10.6"/>
+    <circle cx="392" cy="140" r="6.6"/>
+    <circle cx="420" cy="140" r="6.6"/>
+    <circle cx="448" cy="140" r="10.6"/>
+    <circle cx="476" cy="140" r="6.6"/>
+    <circle cx="504" cy="140" r="6.6"/>
+    <circle cx="532" cy="140" r="6.6"/>
+    <circle cx="560" cy="140" r="10.6"/>
+    <circle cx="588" cy="140" r="6.6"/>
     <circle cx="616" cy="140" r="3.2"/>
     <circle cx="644" cy="140" r="3.2"/>
-    <circle cx="672" cy="140" r="3.2"/>
-    <circle cx="700" cy="140" r="3.2"/>
-    <circle cx="728" cy="140" r="3.2"/>
-    <circle cx="756" cy="140" r="3.2"/>
-    <circle cx="784" cy="140" r="3.2"/>
-    <circle cx="812" cy="140" r="3.2"/>
-    <circle cx="840" cy="140" r="3.2"/>
-    <circle cx="868" cy="140" r="3.2"/>
-    <circle cx="896" cy="140" r="3.2"/>
-    <circle cx="924" cy="140" r="3.2"/>
-    <circle cx="952" cy="140" r="3.2"/>
-    <circle cx="980" cy="140" r="3.2"/>
-    <circle cx="1008" cy="140" r="3.2"/>
-    <circle cx="1036" cy="140" r="3.2"/>
-    <circle cx="1064" cy="140" r="3.2"/>
-    <circle cx="1092" cy="140" r="3.2"/>
-    <circle cx="1120" cy="140" r="3.2"/>
-    <circle cx="1148" cy="140" r="3.2"/>
     <circle cx="28" cy="168" r="3.2"/>
     <circle cx="56" cy="168" r="3.2"/>
-    <circle cx="84" cy="168" r="3.2"/>
-    <circle cx="112" cy="168" r="3.2"/>
-    <circle cx="140" cy="168" r="3.2"/>
+    <circle cx="84" cy="168" r="6.6"/>
+    <circle cx="112" cy="168" r="10.6"/>
+    <circle cx="140" cy="168" r="6.6"/>
     <circle cx="168" cy="168" r="3.2"/>
-    <circle cx="196" cy="168" r="3.2"/>
-    <circle cx="224" cy="168" r="3.2"/>
-    <circle cx="252" cy="168" r="3.2"/>
-    <circle cx="280" cy="168" r="3.2"/>
-    <circle cx="308" cy="168" r="3.2"/>
-    <circle cx="336" cy="168" r="3.2"/>
-    <circle cx="364" cy="168" r="3.2"/>
-    <circle cx="392" cy="168" r="3.2"/>
-    <circle cx="420" cy="168" r="3.2"/>
-    <circle cx="448" cy="168" r="3.2"/>
-    <circle cx="476" cy="168" r="3.2"/>
-    <circle cx="504" cy="168" r="3.2"/>
-    <circle cx="532" cy="168" r="3.2"/>
-    <circle cx="560" cy="168" r="3.2"/>
-    <circle cx="588" cy="168" r="3.2"/>
+    <circle cx="196" cy="168" r="6.6"/>
+    <circle cx="224" cy="168" r="10.6"/>
+    <circle cx="252" cy="168" r="6.6"/>
+    <circle cx="280" cy="168" r="10.6"/>
+    <circle cx="308" cy="168" r="6.6"/>
+    <circle cx="336" cy="168" r="6.6"/>
+    <circle cx="364" cy="168" r="6.6"/>
+    <circle cx="392" cy="168" r="10.6"/>
+    <circle cx="420" cy="168" r="6.6"/>
+    <circle cx="448" cy="168" r="6.6"/>
+    <circle cx="476" cy="168" r="10.6"/>
+    <circle cx="504" cy="168" r="6.6"/>
+    <circle cx="532" cy="168" r="10.6"/>
+    <circle cx="560" cy="168" r="6.6"/>
+    <circle cx="588" cy="168" r="6.6"/>
     <circle cx="616" cy="168" r="3.2"/>
     <circle cx="644" cy="168" r="3.2"/>
-    <circle cx="672" cy="168" r="3.2"/>
-    <circle cx="700" cy="168" r="3.2"/>
-    <circle cx="728" cy="168" r="3.2"/>
-    <circle cx="756" cy="168" r="3.2"/>
-    <circle cx="784" cy="168" r="3.2"/>
-    <circle cx="812" cy="168" r="3.2"/>
-    <circle cx="840" cy="168" r="3.2"/>
-    <circle cx="868" cy="168" r="3.2"/>
-    <circle cx="896" cy="168" r="3.2"/>
-    <circle cx="924" cy="168" r="3.2"/>
-    <circle cx="952" cy="168" r="3.2"/>
-    <circle cx="980" cy="168" r="3.2"/>
-    <circle cx="1008" cy="168" r="3.2"/>
-    <circle cx="1036" cy="168" r="3.2"/>
-    <circle cx="1064" cy="168" r="3.2"/>
-    <circle cx="1092" cy="168" r="3.2"/>
-    <circle cx="1120" cy="168" r="3.2"/>
-    <circle cx="1148" cy="168" r="3.2"/>
     <circle cx="28" cy="196" r="3.2"/>
     <circle cx="56" cy="196" r="3.2"/>
-    <circle cx="84" cy="196" r="3.2"/>
-    <circle cx="112" cy="196" r="3.2"/>
-    <circle cx="140" cy="196" r="3.2"/>
-    <circle cx="168" cy="196" r="3.2"/>
-    <circle cx="196" cy="196" r="3.2"/>
-    <circle cx="224" cy="196" r="3.2"/>
-    <circle cx="252" cy="196" r="3.2"/>
-    <circle cx="280" cy="196" r="3.2"/>
-    <circle cx="308" cy="196" r="3.2"/>
+    <circle cx="84" cy="196" r="6.6"/>
+    <circle cx="112" cy="196" r="10.6"/>
+    <circle cx="140" cy="196" r="6.6"/>
+    <circle cx="168" cy="196" r="6.6"/>
+    <circle cx="196" cy="196" r="6.6"/>
+    <circle cx="224" cy="196" r="10.6"/>
+    <circle cx="252" cy="196" r="6.6"/>
+    <circle cx="280" cy="196" r="10.6"/>
+    <circle cx="308" cy="196" r="6.6"/>
     <circle cx="336" cy="196" r="3.2"/>
-    <circle cx="364" cy="196" r="3.2"/>
-    <circle cx="392" cy="196" r="3.2"/>
-    <circle cx="420" cy="196" r="3.2"/>
-    <circle cx="448" cy="196" r="3.2"/>
-    <circle cx="476" cy="196" r="3.2"/>
-    <circle cx="504" cy="196" r="3.2"/>
-    <circle cx="532" cy="196" r="3.2"/>
-    <circle cx="560" cy="196" r="3.2"/>
+    <circle cx="364" cy="196" r="6.6"/>
+    <circle cx="392" cy="196" r="10.6"/>
+    <circle cx="420" cy="196" r="6.6"/>
+    <circle cx="448" cy="196" r="6.6"/>
+    <circle cx="476" cy="196" r="6.6"/>
+    <circle cx="504" cy="196" r="10.6"/>
+    <circle cx="532" cy="196" r="6.6"/>
+    <circle cx="560" cy="196" r="6.6"/>
     <circle cx="588" cy="196" r="3.2"/>
     <circle cx="616" cy="196" r="3.2"/>
     <circle cx="644" cy="196" r="3.2"/>
-    <circle cx="672" cy="196" r="3.2"/>
-    <circle cx="700" cy="196" r="3.2"/>
-    <circle cx="728" cy="196" r="3.2"/>
-    <circle cx="756" cy="196" r="3.2"/>
-    <circle cx="784" cy="196" r="3.2"/>
-    <circle cx="812" cy="196" r="3.2"/>
-    <circle cx="840" cy="196" r="3.2"/>
-    <circle cx="868" cy="196" r="3.2"/>
-    <circle cx="896" cy="196" r="3.2"/>
-    <circle cx="924" cy="196" r="3.2"/>
-    <circle cx="952" cy="196" r="3.2"/>
-    <circle cx="980" cy="196" r="3.2"/>
-    <circle cx="1008" cy="196" r="3.2"/>
-    <circle cx="1036" cy="196" r="3.2"/>
-    <circle cx="1064" cy="196" r="3.2"/>
-    <circle cx="1092" cy="196" r="3.2"/>
-    <circle cx="1120" cy="196" r="3.2"/>
-    <circle cx="1148" cy="196" r="3.2"/>
     <circle cx="28" cy="224" r="3.2"/>
     <circle cx="56" cy="224" r="3.2"/>
-    <circle cx="84" cy="224" r="3.2"/>
-    <circle cx="112" cy="224" r="3.2"/>
-    <circle cx="140" cy="224" r="3.2"/>
-    <circle cx="168" cy="224" r="3.2"/>
-    <circle cx="196" cy="224" r="3.2"/>
-    <circle cx="224" cy="224" r="3.2"/>
-    <circle cx="252" cy="224" r="3.2"/>
-    <circle cx="280" cy="224" r="3.2"/>
-    <circle cx="308" cy="224" r="3.2"/>
+    <circle cx="84" cy="224" r="6.6"/>
+    <circle cx="112" cy="224" r="6.6"/>
+    <circle cx="140" cy="224" r="10.6"/>
+    <circle cx="168" cy="224" r="6.6"/>
+    <circle cx="196" cy="224" r="10.6"/>
+    <circle cx="224" cy="224" r="6.6"/>
+    <circle cx="252" cy="224" r="6.6"/>
+    <circle cx="280" cy="224" r="10.6"/>
+    <circle cx="308" cy="224" r="6.6"/>
     <circle cx="336" cy="224" r="6.6"/>
     <circle cx="364" cy="224" r="6.6"/>
-    <circle cx="392" cy="224" r="6.6"/>
-    <circle cx="420" cy="224" r="3.2"/>
+    <circle cx="392" cy="224" r="10.6"/>
+    <circle cx="420" cy="224" r="6.6"/>
     <circle cx="448" cy="224" r="6.6"/>
-    <circle cx="476" cy="224" r="6.6"/>
+    <circle cx="476" cy="224" r="10.6"/>
     <circle cx="504" cy="224" r="6.6"/>
-    <circle cx="532" cy="224" r="6.6"/>
+    <circle cx="532" cy="224" r="10.6"/>
     <circle cx="560" cy="224" r="6.6"/>
     <circle cx="588" cy="224" r="6.6"/>
-    <circle cx="616" cy="224" r="6.6"/>
-    <circle cx="644" cy="224" r="6.6"/>
-    <circle cx="672" cy="224" r="6.6"/>
-    <circle cx="700" cy="224" r="6.6"/>
-    <circle cx="728" cy="224" r="6.6"/>
-    <circle cx="756" cy="224" r="3.2"/>
-    <circle cx="784" cy="224" r="6.6"/>
-    <circle cx="812" cy="224" r="6.6"/>
-    <circle cx="840" cy="224" r="6.6"/>
-    <circle cx="868" cy="224" r="3.2"/>
-    <circle cx="896" cy="224" r="3.2"/>
-    <circle cx="924" cy="224" r="3.2"/>
-    <circle cx="952" cy="224" r="3.2"/>
-    <circle cx="980" cy="224" r="3.2"/>
-    <circle cx="1008" cy="224" r="3.2"/>
-    <circle cx="1036" cy="224" r="3.2"/>
-    <circle cx="1064" cy="224" r="3.2"/>
-    <circle cx="1092" cy="224" r="3.2"/>
-    <circle cx="1120" cy="224" r="3.2"/>
-    <circle cx="1148" cy="224" r="3.2"/>
+    <circle cx="616" cy="224" r="3.2"/>
+    <circle cx="644" cy="224" r="3.2"/>
     <circle cx="28" cy="252" r="3.2"/>
     <circle cx="56" cy="252" r="3.2"/>
     <circle cx="84" cy="252" r="3.2"/>
-    <circle cx="112" cy="252" r="3.2"/>
-    <circle cx="140" cy="252" r="3.2"/>
-    <circle cx="168" cy="252" r="3.2"/>
-    <circle cx="196" cy="252" r="3.2"/>
-    <circle cx="224" cy="252" r="3.2"/>
-    <circle cx="252" cy="252" r="3.2"/>
-    <circle cx="280" cy="252" r="3.2"/>
-    <circle cx="308" cy="252" r="3.2"/>
-    <circle cx="336" cy="252" r="6.6"/>
+    <circle cx="112" cy="252" r="6.6"/>
+    <circle cx="140" cy="252" r="6.6"/>
+    <circle cx="168" cy="252" r="10.6"/>
+    <circle cx="196" cy="252" r="6.6"/>
+    <circle cx="224" cy="252" r="6.6"/>
+    <circle cx="252" cy="252" r="6.6"/>
+    <circle cx="280" cy="252" r="6.6"/>
+    <circle cx="308" cy="252" r="10.6"/>
+    <circle cx="336" cy="252" r="10.6"/>
     <circle cx="364" cy="252" r="10.6"/>
     <circle cx="392" cy="252" r="6.6"/>
-    <circle cx="420" cy="252" r="3.2"/>
-    <circle cx="448" cy="252" r="6.6"/>
-    <circle cx="476" cy="252" r="10.6"/>
+    <circle cx="420" cy="252" r="6.6"/>
+    <circle cx="448" cy="252" r="10.6"/>
+    <circle cx="476" cy="252" r="6.6"/>
     <circle cx="504" cy="252" r="6.6"/>
     <circle cx="532" cy="252" r="6.6"/>
     <circle cx="560" cy="252" r="10.6"/>
-    <circle cx="588" cy="252" r="10.6"/>
-    <circle cx="616" cy="252" r="10.6"/>
-    <circle cx="644" cy="252" r="6.6"/>
-    <circle cx="672" cy="252" r="6.6"/>
-    <circle cx="700" cy="252" r="10.6"/>
-    <circle cx="728" cy="252" r="6.6"/>
-    <circle cx="756" cy="252" r="3.2"/>
-    <circle cx="784" cy="252" r="6.6"/>
-    <circle cx="812" cy="252" r="10.6"/>
-    <circle cx="840" cy="252" r="6.6"/>
-    <circle cx="868" cy="252" r="3.2"/>
-    <circle cx="896" cy="252" r="3.2"/>
-    <circle cx="924" cy="252" r="3.2"/>
-    <circle cx="952" cy="252" r="3.2"/>
-    <circle cx="980" cy="252" r="3.2"/>
-    <circle cx="1008" cy="252" r="3.2"/>
-    <circle cx="1036" cy="252" r="3.2"/>
-    <circle cx="1064" cy="252" r="3.2"/>
-    <circle cx="1092" cy="252" r="3.2"/>
-    <circle cx="1120" cy="252" r="3.2"/>
-    <circle cx="1148" cy="252" r="3.2"/>
+    <circle cx="588" cy="252" r="6.6"/>
+    <circle cx="616" cy="252" r="3.2"/>
+    <circle cx="644" cy="252" r="3.2"/>
     <circle cx="28" cy="280" r="3.2"/>
     <circle cx="56" cy="280" r="3.2"/>
     <circle cx="84" cy="280" r="3.2"/>
     <circle cx="112" cy="280" r="3.2"/>
-    <circle cx="140" cy="280" r="3.2"/>
-    <circle cx="168" cy="280" r="3.2"/>
-    <circle cx="196" cy="280" r="3.2"/>
+    <circle cx="140" cy="280" r="6.6"/>
+    <circle cx="168" cy="280" r="6.6"/>
+    <circle cx="196" cy="280" r="6.6"/>
     <circle cx="224" cy="280" r="3.2"/>
     <circle cx="252" cy="280" r="3.2"/>
-    <circle cx="280" cy="280" r="3.2"/>
-    <circle cx="308" cy="280" r="3.2"/>
+    <circle cx="280" cy="280" r="6.6"/>
+    <circle cx="308" cy="280" r="6.6"/>
     <circle cx="336" cy="280" r="6.6"/>
-    <circle cx="364" cy="280" r="10.6"/>
+    <circle cx="364" cy="280" r="6.6"/>
     <circle cx="392" cy="280" r="6.6"/>
-    <circle cx="420" cy="280" r="3.2"/>
+    <circle cx="420" cy="280" r="6.6"/>
     <circle cx="448" cy="280" r="6.6"/>
-    <circle cx="476" cy="280" r="10.6"/>
-    <circle cx="504" cy="280" r="6.6"/>
-    <circle cx="532" cy="280" r="10.6"/>
+    <circle cx="476" cy="280" r="6.6"/>
+    <circle cx="504" cy="280" r="3.2"/>
+    <circle cx="532" cy="280" r="6.6"/>
     <circle cx="560" cy="280" r="6.6"/>
     <circle cx="588" cy="280" r="6.6"/>
-    <circle cx="616" cy="280" r="6.6"/>
-    <circle cx="644" cy="280" r="10.6"/>
-    <circle cx="672" cy="280" r="6.6"/>
-    <circle cx="700" cy="280" r="10.6"/>
-    <circle cx="728" cy="280" r="6.6"/>
-    <circle cx="756" cy="280" r="6.6"/>
-    <circle cx="784" cy="280" r="6.6"/>
-    <circle cx="812" cy="280" r="10.6"/>
-    <circle cx="840" cy="280" r="6.6"/>
-    <circle cx="868" cy="280" r="3.2"/>
-    <circle cx="896" cy="280" r="3.2"/>
-    <circle cx="924" cy="280" r="3.2"/>
-    <circle cx="952" cy="280" r="3.2"/>
-    <circle cx="980" cy="280" r="3.2"/>
-    <circle cx="1008" cy="280" r="3.2"/>
-    <circle cx="1036" cy="280" r="3.2"/>
-    <circle cx="1064" cy="280" r="3.2"/>
-    <circle cx="1092" cy="280" r="3.2"/>
-    <circle cx="1120" cy="280" r="3.2"/>
-    <circle cx="1148" cy="280" r="3.2"/>
+    <circle cx="616" cy="280" r="3.2"/>
+    <circle cx="644" cy="280" r="3.2"/>
     <circle cx="28" cy="308" r="3.2"/>
     <circle cx="56" cy="308" r="3.2"/>
     <circle cx="84" cy="308" r="3.2"/>
@@ -422,36 +242,18 @@
     <circle cx="252" cy="308" r="3.2"/>
     <circle cx="280" cy="308" r="3.2"/>
     <circle cx="308" cy="308" r="3.2"/>
-    <circle cx="336" cy="308" r="6.6"/>
-    <circle cx="364" cy="308" r="10.6"/>
-    <circle cx="392" cy="308" r="6.6"/>
+    <circle cx="336" cy="308" r="3.2"/>
+    <circle cx="364" cy="308" r="3.2"/>
+    <circle cx="392" cy="308" r="3.2"/>
     <circle cx="420" cy="308" r="3.2"/>
-    <circle cx="448" cy="308" r="6.6"/>
-    <circle cx="476" cy="308" r="10.6"/>
-    <circle cx="504" cy="308" r="6.6"/>
-    <circle cx="532" cy="308" r="10.6"/>
-    <circle cx="560" cy="308" r="6.6"/>
+    <circle cx="448" cy="308" r="3.2"/>
+    <circle cx="476" cy="308" r="3.2"/>
+    <circle cx="504" cy="308" r="3.2"/>
+    <circle cx="532" cy="308" r="3.2"/>
+    <circle cx="560" cy="308" r="3.2"/>
     <circle cx="588" cy="308" r="3.2"/>
-    <circle cx="616" cy="308" r="6.6"/>
-    <circle cx="644" cy="308" r="10.6"/>
-    <circle cx="672" cy="308" r="6.6"/>
-    <circle cx="700" cy="308" r="6.6"/>
-    <circle cx="728" cy="308" r="10.6"/>
-    <circle cx="756" cy="308" r="6.6"/>
-    <circle cx="784" cy="308" r="10.6"/>
-    <circle cx="812" cy="308" r="6.6"/>
-    <circle cx="840" cy="308" r="6.6"/>
-    <circle cx="868" cy="308" r="3.2"/>
-    <circle cx="896" cy="308" r="3.2"/>
-    <circle cx="924" cy="308" r="3.2"/>
-    <circle cx="952" cy="308" r="3.2"/>
-    <circle cx="980" cy="308" r="3.2"/>
-    <circle cx="1008" cy="308" r="3.2"/>
-    <circle cx="1036" cy="308" r="3.2"/>
-    <circle cx="1064" cy="308" r="3.2"/>
-    <circle cx="1092" cy="308" r="3.2"/>
-    <circle cx="1120" cy="308" r="3.2"/>
-    <circle cx="1148" cy="308" r="3.2"/>
+    <circle cx="616" cy="308" r="3.2"/>
+    <circle cx="644" cy="308" r="3.2"/>
     <circle cx="28" cy="336" r="3.2"/>
     <circle cx="56" cy="336" r="3.2"/>
     <circle cx="84" cy="336" r="3.2"/>
@@ -463,36 +265,18 @@
     <circle cx="252" cy="336" r="3.2"/>
     <circle cx="280" cy="336" r="3.2"/>
     <circle cx="308" cy="336" r="3.2"/>
-    <circle cx="336" cy="336" r="6.6"/>
-    <circle cx="364" cy="336" r="10.6"/>
-    <circle cx="392" cy="336" r="6.6"/>
+    <circle cx="336" cy="336" r="3.2"/>
+    <circle cx="364" cy="336" r="3.2"/>
+    <circle cx="392" cy="336" r="3.2"/>
     <circle cx="420" cy="336" r="3.2"/>
-    <circle cx="448" cy="336" r="6.6"/>
-    <circle cx="476" cy="336" r="10.6"/>
-    <circle cx="504" cy="336" r="6.6"/>
-    <circle cx="532" cy="336" r="10.6"/>
-    <circle cx="560" cy="336" r="6.6"/>
+    <circle cx="448" cy="336" r="3.2"/>
+    <circle cx="476" cy="336" r="3.2"/>
+    <circle cx="504" cy="336" r="3.2"/>
+    <circle cx="532" cy="336" r="3.2"/>
+    <circle cx="560" cy="336" r="3.2"/>
     <circle cx="588" cy="336" r="3.2"/>
-    <circle cx="616" cy="336" r="6.6"/>
-    <circle cx="644" cy="336" r="10.6"/>
-    <circle cx="672" cy="336" r="6.6"/>
-    <circle cx="700" cy="336" r="6.6"/>
-    <circle cx="728" cy="336" r="6.6"/>
-    <circle cx="756" cy="336" r="10.6"/>
-    <circle cx="784" cy="336" r="6.6"/>
-    <circle cx="812" cy="336" r="6.6"/>
-    <circle cx="840" cy="336" r="3.2"/>
-    <circle cx="868" cy="336" r="3.2"/>
-    <circle cx="896" cy="336" r="3.2"/>
-    <circle cx="924" cy="336" r="3.2"/>
-    <circle cx="952" cy="336" r="3.2"/>
-    <circle cx="980" cy="336" r="3.2"/>
-    <circle cx="1008" cy="336" r="3.2"/>
-    <circle cx="1036" cy="336" r="3.2"/>
-    <circle cx="1064" cy="336" r="3.2"/>
-    <circle cx="1092" cy="336" r="3.2"/>
-    <circle cx="1120" cy="336" r="3.2"/>
-    <circle cx="1148" cy="336" r="3.2"/>
+    <circle cx="616" cy="336" r="3.2"/>
+    <circle cx="644" cy="336" r="3.2"/>
     <circle cx="28" cy="364" r="3.2"/>
     <circle cx="56" cy="364" r="3.2"/>
     <circle cx="84" cy="364" r="3.2"/>
@@ -504,445 +288,17 @@
     <circle cx="252" cy="364" r="3.2"/>
     <circle cx="280" cy="364" r="3.2"/>
     <circle cx="308" cy="364" r="3.2"/>
-    <circle cx="336" cy="364" r="6.6"/>
-    <circle cx="364" cy="364" r="10.6"/>
-    <circle cx="392" cy="364" r="6.6"/>
-    <circle cx="420" cy="364" r="6.6"/>
-    <circle cx="448" cy="364" r="6.6"/>
-    <circle cx="476" cy="364" r="10.6"/>
-    <circle cx="504" cy="364" r="6.6"/>
-    <circle cx="532" cy="364" r="10.6"/>
-    <circle cx="560" cy="364" r="6.6"/>
+    <circle cx="336" cy="364" r="3.2"/>
+    <circle cx="364" cy="364" r="3.2"/>
+    <circle cx="392" cy="364" r="3.2"/>
+    <circle cx="420" cy="364" r="3.2"/>
+    <circle cx="448" cy="364" r="3.2"/>
+    <circle cx="476" cy="364" r="3.2"/>
+    <circle cx="504" cy="364" r="3.2"/>
+    <circle cx="532" cy="364" r="3.2"/>
+    <circle cx="560" cy="364" r="3.2"/>
     <circle cx="588" cy="364" r="3.2"/>
-    <circle cx="616" cy="364" r="6.6"/>
-    <circle cx="644" cy="364" r="10.6"/>
-    <circle cx="672" cy="364" r="6.6"/>
-    <circle cx="700" cy="364" r="6.6"/>
-    <circle cx="728" cy="364" r="10.6"/>
-    <circle cx="756" cy="364" r="6.6"/>
-    <circle cx="784" cy="364" r="10.6"/>
-    <circle cx="812" cy="364" r="6.6"/>
-    <circle cx="840" cy="364" r="6.6"/>
-    <circle cx="868" cy="364" r="3.2"/>
-    <circle cx="896" cy="364" r="3.2"/>
-    <circle cx="924" cy="364" r="3.2"/>
-    <circle cx="952" cy="364" r="3.2"/>
-    <circle cx="980" cy="364" r="3.2"/>
-    <circle cx="1008" cy="364" r="3.2"/>
-    <circle cx="1036" cy="364" r="3.2"/>
-    <circle cx="1064" cy="364" r="3.2"/>
-    <circle cx="1092" cy="364" r="3.2"/>
-    <circle cx="1120" cy="364" r="3.2"/>
-    <circle cx="1148" cy="364" r="3.2"/>
-    <circle cx="28" cy="392" r="3.2"/>
-    <circle cx="56" cy="392" r="3.2"/>
-    <circle cx="84" cy="392" r="3.2"/>
-    <circle cx="112" cy="392" r="3.2"/>
-    <circle cx="140" cy="392" r="3.2"/>
-    <circle cx="168" cy="392" r="3.2"/>
-    <circle cx="196" cy="392" r="3.2"/>
-    <circle cx="224" cy="392" r="3.2"/>
-    <circle cx="252" cy="392" r="3.2"/>
-    <circle cx="280" cy="392" r="3.2"/>
-    <circle cx="308" cy="392" r="3.2"/>
-    <circle cx="336" cy="392" r="6.6"/>
-    <circle cx="364" cy="392" r="6.6"/>
-    <circle cx="392" cy="392" r="10.6"/>
-    <circle cx="420" cy="392" r="6.6"/>
-    <circle cx="448" cy="392" r="10.6"/>
-    <circle cx="476" cy="392" r="6.6"/>
-    <circle cx="504" cy="392" r="6.6"/>
-    <circle cx="532" cy="392" r="10.6"/>
-    <circle cx="560" cy="392" r="6.6"/>
-    <circle cx="588" cy="392" r="6.6"/>
-    <circle cx="616" cy="392" r="6.6"/>
-    <circle cx="644" cy="392" r="10.6"/>
-    <circle cx="672" cy="392" r="6.6"/>
-    <circle cx="700" cy="392" r="10.6"/>
-    <circle cx="728" cy="392" r="6.6"/>
-    <circle cx="756" cy="392" r="6.6"/>
-    <circle cx="784" cy="392" r="6.6"/>
-    <circle cx="812" cy="392" r="10.6"/>
-    <circle cx="840" cy="392" r="6.6"/>
-    <circle cx="868" cy="392" r="3.2"/>
-    <circle cx="896" cy="392" r="3.2"/>
-    <circle cx="924" cy="392" r="3.2"/>
-    <circle cx="952" cy="392" r="3.2"/>
-    <circle cx="980" cy="392" r="3.2"/>
-    <circle cx="1008" cy="392" r="3.2"/>
-    <circle cx="1036" cy="392" r="3.2"/>
-    <circle cx="1064" cy="392" r="3.2"/>
-    <circle cx="1092" cy="392" r="3.2"/>
-    <circle cx="1120" cy="392" r="3.2"/>
-    <circle cx="1148" cy="392" r="3.2"/>
-    <circle cx="28" cy="420" r="3.2"/>
-    <circle cx="56" cy="420" r="3.2"/>
-    <circle cx="84" cy="420" r="3.2"/>
-    <circle cx="112" cy="420" r="3.2"/>
-    <circle cx="140" cy="420" r="3.2"/>
-    <circle cx="168" cy="420" r="3.2"/>
-    <circle cx="196" cy="420" r="3.2"/>
-    <circle cx="224" cy="420" r="3.2"/>
-    <circle cx="252" cy="420" r="3.2"/>
-    <circle cx="280" cy="420" r="3.2"/>
-    <circle cx="308" cy="420" r="3.2"/>
-    <circle cx="336" cy="420" r="3.2"/>
-    <circle cx="364" cy="420" r="6.6"/>
-    <circle cx="392" cy="420" r="6.6"/>
-    <circle cx="420" cy="420" r="10.6"/>
-    <circle cx="448" cy="420" r="6.6"/>
-    <circle cx="476" cy="420" r="6.6"/>
-    <circle cx="504" cy="420" r="6.6"/>
-    <circle cx="532" cy="420" r="6.6"/>
-    <circle cx="560" cy="420" r="10.6"/>
-    <circle cx="588" cy="420" r="10.6"/>
-    <circle cx="616" cy="420" r="10.6"/>
-    <circle cx="644" cy="420" r="6.6"/>
-    <circle cx="672" cy="420" r="6.6"/>
-    <circle cx="700" cy="420" r="10.6"/>
-    <circle cx="728" cy="420" r="6.6"/>
-    <circle cx="756" cy="420" r="3.2"/>
-    <circle cx="784" cy="420" r="6.6"/>
-    <circle cx="812" cy="420" r="10.6"/>
-    <circle cx="840" cy="420" r="6.6"/>
-    <circle cx="868" cy="420" r="3.2"/>
-    <circle cx="896" cy="420" r="3.2"/>
-    <circle cx="924" cy="420" r="3.2"/>
-    <circle cx="952" cy="420" r="3.2"/>
-    <circle cx="980" cy="420" r="3.2"/>
-    <circle cx="1008" cy="420" r="3.2"/>
-    <circle cx="1036" cy="420" r="3.2"/>
-    <circle cx="1064" cy="420" r="3.2"/>
-    <circle cx="1092" cy="420" r="3.2"/>
-    <circle cx="1120" cy="420" r="3.2"/>
-    <circle cx="1148" cy="420" r="3.2"/>
-    <circle cx="28" cy="448" r="3.2"/>
-    <circle cx="56" cy="448" r="3.2"/>
-    <circle cx="84" cy="448" r="3.2"/>
-    <circle cx="112" cy="448" r="3.2"/>
-    <circle cx="140" cy="448" r="3.2"/>
-    <circle cx="168" cy="448" r="3.2"/>
-    <circle cx="196" cy="448" r="3.2"/>
-    <circle cx="224" cy="448" r="3.2"/>
-    <circle cx="252" cy="448" r="3.2"/>
-    <circle cx="280" cy="448" r="3.2"/>
-    <circle cx="308" cy="448" r="3.2"/>
-    <circle cx="336" cy="448" r="3.2"/>
-    <circle cx="364" cy="448" r="3.2"/>
-    <circle cx="392" cy="448" r="6.6"/>
-    <circle cx="420" cy="448" r="6.6"/>
-    <circle cx="448" cy="448" r="6.6"/>
-    <circle cx="476" cy="448" r="3.2"/>
-    <circle cx="504" cy="448" r="3.2"/>
-    <circle cx="532" cy="448" r="6.6"/>
-    <circle cx="560" cy="448" r="6.6"/>
-    <circle cx="588" cy="448" r="6.6"/>
-    <circle cx="616" cy="448" r="6.6"/>
-    <circle cx="644" cy="448" r="6.6"/>
-    <circle cx="672" cy="448" r="6.6"/>
-    <circle cx="700" cy="448" r="6.6"/>
-    <circle cx="728" cy="448" r="6.6"/>
-    <circle cx="756" cy="448" r="3.2"/>
-    <circle cx="784" cy="448" r="6.6"/>
-    <circle cx="812" cy="448" r="6.6"/>
-    <circle cx="840" cy="448" r="6.6"/>
-    <circle cx="868" cy="448" r="3.2"/>
-    <circle cx="896" cy="448" r="3.2"/>
-    <circle cx="924" cy="448" r="3.2"/>
-    <circle cx="952" cy="448" r="3.2"/>
-    <circle cx="980" cy="448" r="3.2"/>
-    <circle cx="1008" cy="448" r="3.2"/>
-    <circle cx="1036" cy="448" r="3.2"/>
-    <circle cx="1064" cy="448" r="3.2"/>
-    <circle cx="1092" cy="448" r="3.2"/>
-    <circle cx="1120" cy="448" r="3.2"/>
-    <circle cx="1148" cy="448" r="3.2"/>
-    <circle cx="28" cy="476" r="3.2"/>
-    <circle cx="56" cy="476" r="3.2"/>
-    <circle cx="84" cy="476" r="3.2"/>
-    <circle cx="112" cy="476" r="3.2"/>
-    <circle cx="140" cy="476" r="3.2"/>
-    <circle cx="168" cy="476" r="3.2"/>
-    <circle cx="196" cy="476" r="3.2"/>
-    <circle cx="224" cy="476" r="3.2"/>
-    <circle cx="252" cy="476" r="3.2"/>
-    <circle cx="280" cy="476" r="3.2"/>
-    <circle cx="308" cy="476" r="3.2"/>
-    <circle cx="336" cy="476" r="3.2"/>
-    <circle cx="364" cy="476" r="3.2"/>
-    <circle cx="392" cy="476" r="3.2"/>
-    <circle cx="420" cy="476" r="3.2"/>
-    <circle cx="448" cy="476" r="3.2"/>
-    <circle cx="476" cy="476" r="3.2"/>
-    <circle cx="504" cy="476" r="3.2"/>
-    <circle cx="532" cy="476" r="3.2"/>
-    <circle cx="560" cy="476" r="3.2"/>
-    <circle cx="588" cy="476" r="3.2"/>
-    <circle cx="616" cy="476" r="3.2"/>
-    <circle cx="644" cy="476" r="3.2"/>
-    <circle cx="672" cy="476" r="3.2"/>
-    <circle cx="700" cy="476" r="3.2"/>
-    <circle cx="728" cy="476" r="3.2"/>
-    <circle cx="756" cy="476" r="3.2"/>
-    <circle cx="784" cy="476" r="3.2"/>
-    <circle cx="812" cy="476" r="3.2"/>
-    <circle cx="840" cy="476" r="3.2"/>
-    <circle cx="868" cy="476" r="3.2"/>
-    <circle cx="896" cy="476" r="3.2"/>
-    <circle cx="924" cy="476" r="3.2"/>
-    <circle cx="952" cy="476" r="3.2"/>
-    <circle cx="980" cy="476" r="3.2"/>
-    <circle cx="1008" cy="476" r="3.2"/>
-    <circle cx="1036" cy="476" r="3.2"/>
-    <circle cx="1064" cy="476" r="3.2"/>
-    <circle cx="1092" cy="476" r="3.2"/>
-    <circle cx="1120" cy="476" r="3.2"/>
-    <circle cx="1148" cy="476" r="3.2"/>
-    <circle cx="28" cy="504" r="3.2"/>
-    <circle cx="56" cy="504" r="3.2"/>
-    <circle cx="84" cy="504" r="3.2"/>
-    <circle cx="112" cy="504" r="3.2"/>
-    <circle cx="140" cy="504" r="3.2"/>
-    <circle cx="168" cy="504" r="3.2"/>
-    <circle cx="196" cy="504" r="3.2"/>
-    <circle cx="224" cy="504" r="3.2"/>
-    <circle cx="252" cy="504" r="3.2"/>
-    <circle cx="280" cy="504" r="3.2"/>
-    <circle cx="308" cy="504" r="3.2"/>
-    <circle cx="336" cy="504" r="3.2"/>
-    <circle cx="364" cy="504" r="3.2"/>
-    <circle cx="392" cy="504" r="3.2"/>
-    <circle cx="420" cy="504" r="3.2"/>
-    <circle cx="448" cy="504" r="3.2"/>
-    <circle cx="476" cy="504" r="3.2"/>
-    <circle cx="504" cy="504" r="3.2"/>
-    <circle cx="532" cy="504" r="3.2"/>
-    <circle cx="560" cy="504" r="3.2"/>
-    <circle cx="588" cy="504" r="3.2"/>
-    <circle cx="616" cy="504" r="3.2"/>
-    <circle cx="644" cy="504" r="3.2"/>
-    <circle cx="672" cy="504" r="3.2"/>
-    <circle cx="700" cy="504" r="3.2"/>
-    <circle cx="728" cy="504" r="3.2"/>
-    <circle cx="756" cy="504" r="3.2"/>
-    <circle cx="784" cy="504" r="3.2"/>
-    <circle cx="812" cy="504" r="3.2"/>
-    <circle cx="840" cy="504" r="3.2"/>
-    <circle cx="868" cy="504" r="3.2"/>
-    <circle cx="896" cy="504" r="3.2"/>
-    <circle cx="924" cy="504" r="3.2"/>
-    <circle cx="952" cy="504" r="3.2"/>
-    <circle cx="980" cy="504" r="3.2"/>
-    <circle cx="1008" cy="504" r="3.2"/>
-    <circle cx="1036" cy="504" r="3.2"/>
-    <circle cx="1064" cy="504" r="3.2"/>
-    <circle cx="1092" cy="504" r="3.2"/>
-    <circle cx="1120" cy="504" r="3.2"/>
-    <circle cx="1148" cy="504" r="3.2"/>
-    <circle cx="28" cy="532" r="3.2"/>
-    <circle cx="56" cy="532" r="3.2"/>
-    <circle cx="84" cy="532" r="3.2"/>
-    <circle cx="112" cy="532" r="3.2"/>
-    <circle cx="140" cy="532" r="3.2"/>
-    <circle cx="168" cy="532" r="3.2"/>
-    <circle cx="196" cy="532" r="3.2"/>
-    <circle cx="224" cy="532" r="3.2"/>
-    <circle cx="252" cy="532" r="3.2"/>
-    <circle cx="280" cy="532" r="3.2"/>
-    <circle cx="308" cy="532" r="3.2"/>
-    <circle cx="336" cy="532" r="3.2"/>
-    <circle cx="364" cy="532" r="3.2"/>
-    <circle cx="392" cy="532" r="3.2"/>
-    <circle cx="420" cy="532" r="3.2"/>
-    <circle cx="448" cy="532" r="3.2"/>
-    <circle cx="476" cy="532" r="3.2"/>
-    <circle cx="504" cy="532" r="3.2"/>
-    <circle cx="532" cy="532" r="3.2"/>
-    <circle cx="560" cy="532" r="3.2"/>
-    <circle cx="588" cy="532" r="3.2"/>
-    <circle cx="616" cy="532" r="3.2"/>
-    <circle cx="644" cy="532" r="3.2"/>
-    <circle cx="672" cy="532" r="3.2"/>
-    <circle cx="700" cy="532" r="3.2"/>
-    <circle cx="728" cy="532" r="3.2"/>
-    <circle cx="756" cy="532" r="3.2"/>
-    <circle cx="784" cy="532" r="3.2"/>
-    <circle cx="812" cy="532" r="3.2"/>
-    <circle cx="840" cy="532" r="3.2"/>
-    <circle cx="868" cy="532" r="3.2"/>
-    <circle cx="896" cy="532" r="3.2"/>
-    <circle cx="924" cy="532" r="3.2"/>
-    <circle cx="952" cy="532" r="3.2"/>
-    <circle cx="980" cy="532" r="3.2"/>
-    <circle cx="1008" cy="532" r="3.2"/>
-    <circle cx="1036" cy="532" r="3.2"/>
-    <circle cx="1064" cy="532" r="3.2"/>
-    <circle cx="1092" cy="532" r="3.2"/>
-    <circle cx="1120" cy="532" r="3.2"/>
-    <circle cx="1148" cy="532" r="3.2"/>
-    <circle cx="28" cy="560" r="3.2"/>
-    <circle cx="56" cy="560" r="3.2"/>
-    <circle cx="84" cy="560" r="3.2"/>
-    <circle cx="112" cy="560" r="3.2"/>
-    <circle cx="140" cy="560" r="3.2"/>
-    <circle cx="168" cy="560" r="3.2"/>
-    <circle cx="196" cy="560" r="3.2"/>
-    <circle cx="224" cy="560" r="3.2"/>
-    <circle cx="252" cy="560" r="3.2"/>
-    <circle cx="280" cy="560" r="3.2"/>
-    <circle cx="308" cy="560" r="3.2"/>
-    <circle cx="336" cy="560" r="3.2"/>
-    <circle cx="364" cy="560" r="3.2"/>
-    <circle cx="392" cy="560" r="3.2"/>
-    <circle cx="420" cy="560" r="3.2"/>
-    <circle cx="448" cy="560" r="3.2"/>
-    <circle cx="476" cy="560" r="3.2"/>
-    <circle cx="504" cy="560" r="3.2"/>
-    <circle cx="532" cy="560" r="3.2"/>
-    <circle cx="560" cy="560" r="3.2"/>
-    <circle cx="588" cy="560" r="3.2"/>
-    <circle cx="616" cy="560" r="3.2"/>
-    <circle cx="644" cy="560" r="3.2"/>
-    <circle cx="672" cy="560" r="3.2"/>
-    <circle cx="700" cy="560" r="3.2"/>
-    <circle cx="728" cy="560" r="3.2"/>
-    <circle cx="756" cy="560" r="3.2"/>
-    <circle cx="784" cy="560" r="3.2"/>
-    <circle cx="812" cy="560" r="3.2"/>
-    <circle cx="840" cy="560" r="3.2"/>
-    <circle cx="868" cy="560" r="3.2"/>
-    <circle cx="896" cy="560" r="3.2"/>
-    <circle cx="924" cy="560" r="3.2"/>
-    <circle cx="952" cy="560" r="3.2"/>
-    <circle cx="980" cy="560" r="3.2"/>
-    <circle cx="1008" cy="560" r="3.2"/>
-    <circle cx="1036" cy="560" r="3.2"/>
-    <circle cx="1064" cy="560" r="3.2"/>
-    <circle cx="1092" cy="560" r="3.2"/>
-    <circle cx="1120" cy="560" r="3.2"/>
-    <circle cx="1148" cy="560" r="3.2"/>
-    <circle cx="28" cy="588" r="3.2"/>
-    <circle cx="56" cy="588" r="3.2"/>
-    <circle cx="84" cy="588" r="3.2"/>
-    <circle cx="112" cy="588" r="3.2"/>
-    <circle cx="140" cy="588" r="3.2"/>
-    <circle cx="168" cy="588" r="3.2"/>
-    <circle cx="196" cy="588" r="3.2"/>
-    <circle cx="224" cy="588" r="3.2"/>
-    <circle cx="252" cy="588" r="3.2"/>
-    <circle cx="280" cy="588" r="3.2"/>
-    <circle cx="308" cy="588" r="3.2"/>
-    <circle cx="336" cy="588" r="3.2"/>
-    <circle cx="364" cy="588" r="3.2"/>
-    <circle cx="392" cy="588" r="3.2"/>
-    <circle cx="420" cy="588" r="3.2"/>
-    <circle cx="448" cy="588" r="3.2"/>
-    <circle cx="476" cy="588" r="3.2"/>
-    <circle cx="504" cy="588" r="3.2"/>
-    <circle cx="532" cy="588" r="3.2"/>
-    <circle cx="560" cy="588" r="3.2"/>
-    <circle cx="588" cy="588" r="3.2"/>
-    <circle cx="616" cy="588" r="3.2"/>
-    <circle cx="644" cy="588" r="3.2"/>
-    <circle cx="672" cy="588" r="3.2"/>
-    <circle cx="700" cy="588" r="3.2"/>
-    <circle cx="728" cy="588" r="3.2"/>
-    <circle cx="756" cy="588" r="3.2"/>
-    <circle cx="784" cy="588" r="3.2"/>
-    <circle cx="812" cy="588" r="3.2"/>
-    <circle cx="840" cy="588" r="3.2"/>
-    <circle cx="868" cy="588" r="3.2"/>
-    <circle cx="896" cy="588" r="3.2"/>
-    <circle cx="924" cy="588" r="3.2"/>
-    <circle cx="952" cy="588" r="3.2"/>
-    <circle cx="980" cy="588" r="3.2"/>
-    <circle cx="1008" cy="588" r="3.2"/>
-    <circle cx="1036" cy="588" r="3.2"/>
-    <circle cx="1064" cy="588" r="3.2"/>
-    <circle cx="1092" cy="588" r="3.2"/>
-    <circle cx="1120" cy="588" r="3.2"/>
-    <circle cx="1148" cy="588" r="3.2"/>
-    <circle cx="28" cy="616" r="3.2"/>
-    <circle cx="56" cy="616" r="3.2"/>
-    <circle cx="84" cy="616" r="3.2"/>
-    <circle cx="112" cy="616" r="3.2"/>
-    <circle cx="140" cy="616" r="3.2"/>
-    <circle cx="168" cy="616" r="3.2"/>
-    <circle cx="196" cy="616" r="3.2"/>
-    <circle cx="224" cy="616" r="3.2"/>
-    <circle cx="252" cy="616" r="3.2"/>
-    <circle cx="280" cy="616" r="3.2"/>
-    <circle cx="308" cy="616" r="3.2"/>
-    <circle cx="336" cy="616" r="3.2"/>
-    <circle cx="364" cy="616" r="3.2"/>
-    <circle cx="392" cy="616" r="3.2"/>
-    <circle cx="420" cy="616" r="3.2"/>
-    <circle cx="448" cy="616" r="3.2"/>
-    <circle cx="476" cy="616" r="3.2"/>
-    <circle cx="504" cy="616" r="3.2"/>
-    <circle cx="532" cy="616" r="3.2"/>
-    <circle cx="560" cy="616" r="3.2"/>
-    <circle cx="588" cy="616" r="3.2"/>
-    <circle cx="616" cy="616" r="3.2"/>
-    <circle cx="644" cy="616" r="3.2"/>
-    <circle cx="672" cy="616" r="3.2"/>
-    <circle cx="700" cy="616" r="3.2"/>
-    <circle cx="728" cy="616" r="3.2"/>
-    <circle cx="756" cy="616" r="3.2"/>
-    <circle cx="784" cy="616" r="3.2"/>
-    <circle cx="812" cy="616" r="3.2"/>
-    <circle cx="840" cy="616" r="3.2"/>
-    <circle cx="868" cy="616" r="3.2"/>
-    <circle cx="896" cy="616" r="3.2"/>
-    <circle cx="924" cy="616" r="3.2"/>
-    <circle cx="952" cy="616" r="3.2"/>
-    <circle cx="980" cy="616" r="3.2"/>
-    <circle cx="1008" cy="616" r="3.2"/>
-    <circle cx="1036" cy="616" r="3.2"/>
-    <circle cx="1064" cy="616" r="3.2"/>
-    <circle cx="1092" cy="616" r="3.2"/>
-    <circle cx="1120" cy="616" r="3.2"/>
-    <circle cx="1148" cy="616" r="3.2"/>
-    <circle cx="28" cy="644" r="3.2"/>
-    <circle cx="56" cy="644" r="3.2"/>
-    <circle cx="84" cy="644" r="3.2"/>
-    <circle cx="112" cy="644" r="3.2"/>
-    <circle cx="140" cy="644" r="3.2"/>
-    <circle cx="168" cy="644" r="3.2"/>
-    <circle cx="196" cy="644" r="3.2"/>
-    <circle cx="224" cy="644" r="3.2"/>
-    <circle cx="252" cy="644" r="3.2"/>
-    <circle cx="280" cy="644" r="3.2"/>
-    <circle cx="308" cy="644" r="3.2"/>
-    <circle cx="336" cy="644" r="3.2"/>
-    <circle cx="364" cy="644" r="3.2"/>
-    <circle cx="392" cy="644" r="3.2"/>
-    <circle cx="420" cy="644" r="3.2"/>
-    <circle cx="448" cy="644" r="3.2"/>
-    <circle cx="476" cy="644" r="3.2"/>
-    <circle cx="504" cy="644" r="3.2"/>
-    <circle cx="532" cy="644" r="3.2"/>
-    <circle cx="560" cy="644" r="3.2"/>
-    <circle cx="588" cy="644" r="3.2"/>
-    <circle cx="616" cy="644" r="3.2"/>
-    <circle cx="644" cy="644" r="3.2"/>
-    <circle cx="672" cy="644" r="3.2"/>
-    <circle cx="700" cy="644" r="3.2"/>
-    <circle cx="728" cy="644" r="3.2"/>
-    <circle cx="756" cy="644" r="3.2"/>
-    <circle cx="784" cy="644" r="3.2"/>
-    <circle cx="812" cy="644" r="3.2"/>
-    <circle cx="840" cy="644" r="3.2"/>
-    <circle cx="868" cy="644" r="3.2"/>
-    <circle cx="896" cy="644" r="3.2"/>
-    <circle cx="924" cy="644" r="3.2"/>
-    <circle cx="952" cy="644" r="3.2"/>
-    <circle cx="980" cy="644" r="3.2"/>
-    <circle cx="1008" cy="644" r="3.2"/>
-    <circle cx="1036" cy="644" r="3.2"/>
-    <circle cx="1064" cy="644" r="3.2"/>
-    <circle cx="1092" cy="644" r="3.2"/>
-    <circle cx="1120" cy="644" r="3.2"/>
-    <circle cx="1148" cy="644" r="3.2"/>
+    <circle cx="616" cy="364" r="3.2"/>
+    <circle cx="644" cy="364" r="3.2"/>
   </g>
 </svg>
