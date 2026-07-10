@@ -211,12 +211,53 @@ _HOTWORD_TOKENS = {
     w for hw in HOTWORDS for w in re.split(r"[\s\-]+", hw.lower()) if w
 }
 _NAMELIKE_RE = re.compile(r"^[A-Z][\w'\-]*$")
+# Space-joined runs of >=2 consecutive dictionary entries, longest first
+# (e.g. "OBS Andregg Rokid"). Whisper is prompted with " ".join(HOTWORDS), so
+# when its decoder echoes the prompt it reproduces exactly such a run:
+# dictionary order, original casing, nothing but spaces between entries.
+_HOTWORD_RUNS = sorted(
+    (
+        " ".join(HOTWORDS[i:j])
+        for i in range(len(HOTWORDS))
+        for j in range(i + 2, len(HOTWORDS) + 1)
+    ),
+    key=len,
+    reverse=True,
+)
 
 
 def apply_corrections(text):
     """Replace known misrecognitions (whole-word, case-insensitive)."""
     for pattern, right in _CORRECTION_RES:
         text = pattern.sub(right, text)
+    return text
+
+
+def strip_trailing_hotword_run(text):
+    """Remove a verbatim echo of the hotword prompt from the end of the text.
+
+    Whisper sees the dictionary as one space-joined prompt string on every
+    decode window; when the final window is mostly silence or a garbled tail,
+    the decoder can copy a chunk of that prompt instead of transcribing the
+    audio - even mid-sentence, replacing real speech: "...feedback I've given
+    you, OBS Andregg Rokid". The echo's fingerprint is >=2 dictionary entries
+    in dictionary order with prompt casing and only spaces between them; real
+    speech that mentions a hotword ("I met Andregg"), or several with natural
+    punctuation ("Claude Code, Anthropic"), never takes that exact shape.
+    Disable with VOX_STRIP_PHANTOMS=0.
+    """
+    if not STRIP_PHANTOMS or not _HOTWORD_RUNS or not text:
+        return text
+    trail = text.rstrip().rstrip(".,!?;: ")
+    for run in _HOTWORD_RUNS:
+        if not trail.endswith(run):
+            continue
+        head = trail[: -len(run)]
+        if head and not (head[-1].isspace() or head[-1] in ",;:.!?"):
+            continue  # run must start on a word boundary
+        head = head.rstrip().rstrip(",;: ")
+        print(f">> Stripped hotword echo from tail: {run!r}", flush=True)
+        return head
     return text
 
 
@@ -279,7 +320,12 @@ def llm_format(text):
         client = anthropic.Anthropic(max_retries=0, timeout=LLM_TIMEOUT)
         keep = ""
         if HOTWORDS:
-            keep = " Preserve these terms verbatim if present: " + ", ".join(HOTWORDS) + "."
+            keep = (
+                " Reference spellings, to be used ONLY where the transcript"
+                " already contains these terms: " + ", ".join(HOTWORDS) + "."
+                " Never insert or append them anywhere else; if the transcript"
+                " ends abruptly, leave the ending exactly as it is."
+            )
         msg = client.messages.create(
             model=LLM_MODEL,
             max_tokens=4000,
@@ -307,10 +353,11 @@ def post_process(text):
     it can't "preserve" them), then the optional LLM pass, then personal-dictionary
     corrections LAST so they always win (e.g. Rokid) even over the LLM's rewrite.
     """
-    text = clean_text(text)               # 1. strip fillers, tidy spacing
-    text = strip_trailing_phantoms(text)  # 2. drop hallucinated trailing hotwords
-    text = llm_format(text)               # 3. optional LLM cleanup (off by default)
-    text = apply_corrections(text)        # 4. personal-dictionary corrections (final say)
+    text = clean_text(text)                  # 1. strip fillers, tidy spacing
+    text = strip_trailing_hotword_run(text)  # 2. drop verbatim hotword-prompt echo
+    text = strip_trailing_phantoms(text)     # 3. drop hallucinated trailing hotwords
+    text = llm_format(text)                  # 4. optional LLM cleanup (off by default)
+    text = apply_corrections(text)           # 5. personal-dictionary corrections (final say)
     return text
 
 
