@@ -56,19 +56,22 @@ try:
     PLUS_THICK = int(os.environ.get("VOX_HUD_PLUS_THICK", "2"))  # line thickness, px
 except ValueError:
     PLUS_THICK = 2
-# DX/DY position the marker CENTER relative to the caret (0,0 = right on it).
-try:
-    CARET_DX = int(os.environ.get("VOX_HUD_DX", "4"))
-except ValueError:
-    CARET_DX = 4
-try:
-    CARET_DY = int(os.environ.get("VOX_HUD_DY", "0"))
-except ValueError:
-    CARET_DY = 0
 
-# The marker center's fixed x within the window; the window is positioned so
-# this point lands on the caret (+ DX/DY), so DX/DY move the plus precisely.
-_MARK_CX = 12
+
+def _int_env(name, default):
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+# Two INDEPENDENT offsets, both relative to the caret (0,0 = right on it):
+# the plus marker, and the timer/meter group. So you can pin the crosshair on
+# the caret and place the readout wherever you like, separately.
+PLUS_DX = _int_env("VOX_HUD_PLUS_DX", 0)
+PLUS_DY = _int_env("VOX_HUD_PLUS_DY", 0)
+CARET_DX = _int_env("VOX_HUD_DX", 16)   # timer group, right of the caret
+CARET_DY = _int_env("VOX_HUD_DY", 0)
 
 
 def _opacity():
@@ -87,8 +90,12 @@ def _opacity():
 _KEY = "#010203"
 _FPS_MS = 33          # ~30 fps poll/redraw
 _DONE_SECS = 1.6      # how long the result stats linger
-_W, _H = 240, 44      # canvas size
-_OFFSET = (18, 26)    # HUD position relative to the mouse cursor (cursor mode)
+# The window is a generous transparent canvas (click-through, so the empty
+# space costs nothing) with the caret mapped to a fixed interior point; both
+# the plus and the timer are then drawn at their own caret-relative offsets.
+_W, _H = 320, 80
+_CAX, _CAY = 64, 40   # where the caret maps inside the window
+_OFFSET = (18, 0)     # extra shift for cursor mode / static fallback
 
 # Windows extended-style bits for a ghost window.
 _GWL_EXSTYLE = -20
@@ -138,7 +145,8 @@ def _caret_pos():
         gti.cbSize = ctypes.sizeof(gti)
         if not u.GetGUIThreadInfo(tid, ctypes.byref(gti)) or not gti.hwndCaret:
             return None
-        pt = _Point(gti.rcCaret.left, gti.rcCaret.bottom)
+        mid_y = (gti.rcCaret.top + gti.rcCaret.bottom) // 2
+        pt = _Point(gti.rcCaret.left, mid_y)
         u.ClientToScreen(gti.hwndCaret, ctypes.byref(pt))
         if pt.x == 0 and pt.y == 0:
             return None
@@ -296,15 +304,15 @@ class Hud:
             x, y = sw - _W - 24, sh - _H - 64
         elif ANCHOR == "cursor":
             cx, cy = _cursor_pos()
-            x = cx + _OFFSET[0] - _MARK_CX
-            y = cy + _OFFSET[1] - _H // 2
+            ax, ay = cx + _OFFSET[0], cy + _OFFSET[1]
+            x, y = ax - _CAX, ay - _CAY
         else:  # caret: track the text insertion point, static fallback
             caret = _caret_pos()
             ax, ay = caret if caret else (self._anchor[0] + _OFFSET[0],
                                           self._anchor[1] + _OFFSET[1])
-            # Place the window so the marker center lands on the caret (+DX/DY).
-            x = ax + CARET_DX - _MARK_CX
-            y = ay + CARET_DY - _H // 2
+            # Map the caret to the window's interior anchor; the plus and timer
+            # are drawn at their own offsets from there.
+            x, y = ax - _CAX, ay - _CAY
         vl, vt, vw, vh = _virtual_screen()
         x = max(vl, min(x, vl + vw - _W))
         y = max(vt, min(y, vt + vh - _H))
@@ -329,64 +337,60 @@ class Hud:
                 x + i * cell + cell / 2.0, y, text=ch, fill=fill,
                 font=(FONT, -SIZE), anchor="c")
 
-    def _marker(self, y, u):
-        """Leading marker at the caret: a red plus (default), a static dot, or
-        nothing. Returns the x where the trailing timer/text should start."""
-        cx = float(_MARK_CX)
+    def _plus(self):
+        """Draw the caret marker at its own offset: a red plus (default), a
+        static dot, or nothing. Independent of the timer group."""
+        cx = _CAX + PLUS_DX
+        cy = _CAY + PLUS_DY
         if PLUS:
             half = PLUS_SIZE / 2.0
             w = max(1, PLUS_THICK)
             c = self._canvas
-            c.create_line(cx, y - half, cx, y + half, fill="#e2504a",
+            c.create_line(cx, cy - half, cx, cy + half, fill="#e2504a",
                           width=w, capstyle="projecting")
-            c.create_line(cx - half, y, cx + half, y, fill="#e2504a",
+            c.create_line(cx - half, cy, cx + half, cy, fill="#e2504a",
                           width=w, capstyle="projecting")
-            return cx + half + u * 0.45
-        if SHOW_DOT:
-            r = u * 0.34
-            self._canvas.create_oval(cx - r, y - r, cx + r, y + r,
+        elif SHOW_DOT:
+            r = SIZE * 0.34
+            self._canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
                                      fill="#d1605b", outline="")
-            return cx + r + u * 0.45
-        return cx + u * 0.3
 
     def _draw(self, phase):
         c = self._canvas
         c.delete("all")
         u = float(SIZE)
-        y = _H // 2
         cell = u * 0.66
+        self._plus()
+        # timer/meter group at its own independent caret-relative offset
+        tx = _CAX + CARET_DX
+        ty = _CAY + CARET_DY
         if phase == "rec":
-            x0 = self._marker(y, u)
             # seconds only, tenths, no leading zero / no minutes: 7.4, 92.6, 128.1
             el = max(0.0, time.monotonic() - self.t0)
-            self._tabular(x0, y, f"{el:.1f}", "#f2f3f5", cell)
+            self._tabular(tx, ty, f"{el:.1f}", "#f2f3f5", cell)
             # meter at a FIXED offset (5-cell field) so it never shifts as the
             # number grows past 10s / 100s
-            mx = x0 + 5 * cell + u * 0.6
+            mx = tx + 5 * cell + u * 0.6
             step = u * 0.5
             lit = max(0, min(5, int((self.level_db + 55.0) / 40.0 * 5 + 0.5)))
             for i in range(5):
                 bx = mx + i * step
                 bh = u * 0.36 + i * (u * 0.28)
                 color = "#1d9e75" if i < lit else "#2c2f36"
-                c.create_rectangle(bx, y + u * 0.7, bx + max(1.0, u * 0.28),
-                                   y + u * 0.7 - bh, fill=color, outline="")
+                c.create_rectangle(bx, ty + u * 0.7, bx + max(1.0, u * 0.28),
+                                   ty + u * 0.7 - bh, fill=color, outline="")
             if self.level_db > -100:
-                self._text(mx + 5 * step + u * 0.7, y, f"{self.level_db:.0f}",
+                self._text(mx + 5 * step + u * 0.7, ty, f"{self.level_db:.0f}",
                            "#8fa3ad", size=max(7, int(u * 0.82)))
         elif phase == "busy":
-            # live release->paste latency clock, in yellow
-            x0 = self._marker(y, u)
             lat = max(0.0, time.monotonic() - self._busy_t0)
-            self._tabular(x0, y, f"{lat:.1f}", "#e0a83a", cell)
+            self._tabular(tx, ty, f"{lat:.1f}", "#e0a83a", cell)
         elif phase == "done":
-            # freeze the final latency (yellow) + word/token count (light)
-            x0 = self._marker(y, u)
-            xend = self._text(x0, y, f"{self._latency:.1f}s", "#e0a83a")
+            xend = self._text(tx, ty, f"{self._latency:.1f}s", "#e0a83a")
             rest = f"  {self._words} w"
             if self._tokens:
                 rest += f"  {self._tokens} tok"
-            self._text(xend + u * 0.3, y, rest, "#c9ccd1")
+            self._text(xend + u * 0.3, ty, rest, "#c9ccd1")
 
 
 class NullHud:
