@@ -44,9 +44,20 @@ ANCHOR = os.environ.get("VOX_HUD_ANCHOR", "caret").strip().lower()
 # live via env so styling doesn't need a code change.
 FONT = os.environ.get("VOX_HUD_FONT", "Segoe UI Light")
 try:
-    SIZE = int(os.environ.get("VOX_HUD_SIZE", "8"))   # pixels (see negative-size note)
+    SIZE = int(os.environ.get("VOX_HUD_SIZE", "13"))  # pixels (tk negative size)
 except ValueError:
-    SIZE = 8
+    SIZE = 13
+# The record dot is off by default now - the timer's presence (and color) is
+# enough to show state. VOX_HUD_DOT=1 brings back a small STATIC dot.
+SHOW_DOT = os.environ.get("VOX_HUD_DOT", "0").strip().lower() in ("1", "true", "on", "yes")
+try:
+    CARET_DX = int(os.environ.get("VOX_HUD_DX", "6"))   # px right of the caret
+except ValueError:
+    CARET_DX = 6
+try:
+    CARET_DY = int(os.environ.get("VOX_HUD_DY", "4"))   # px below the caret
+except ValueError:
+    CARET_DY = 4
 
 
 def _opacity():
@@ -67,7 +78,6 @@ _FPS_MS = 33          # ~30 fps poll/redraw
 _DONE_SECS = 1.6      # how long the result stats linger
 _W, _H = 240, 44      # canvas size
 _OFFSET = (18, 26)    # HUD position relative to the mouse cursor (cursor mode)
-_CARET_OFFSET = (14, 6)   # below-right of the text caret, so it clears the line
 
 # Windows extended-style bits for a ghost window.
 _GWL_EXSTYLE = -20
@@ -141,7 +151,10 @@ class Hud:
         self.phase = "idle"        # idle | rec | busy | done
         self.t0 = 0.0              # monotonic start of recording
         self.level_db = -120.0     # latest mic RMS in dBFS
-        self.stats = ""            # e.g. "42 w · 7.4s · 128 tok"
+        self._busy_t0 = 0.0        # monotonic when transcription began (latency clock)
+        self._latency = 0.0        # measured release->paste seconds, shown on done
+        self._words = 0
+        self._tokens = None
         self._done_at = 0.0
         self._anchor = (0, 0)      # static fallback position (mouse at rec start)
         # Session generation: each recording() bumps it; busy()/done()/idle()
@@ -183,15 +196,15 @@ class Hud:
         if gen is not None and gen != self._gen:
             return
         if self.phase == "rec":
+            self._busy_t0 = time.monotonic()  # start the release->paste latency clock
             self.phase = "busy"
 
     def done(self, words, secs, tokens=None, gen=None):
         if gen is not None and gen != self._gen:
             return
-        parts = [f"{words} w", f"{secs:.1f}s"]
-        if tokens:
-            parts.append(f"{tokens} tok")
-        self.stats = " · ".join(parts)
+        self._latency = (time.monotonic() - self._busy_t0) if self._busy_t0 else 0.0
+        self._words = words
+        self._tokens = tokens
         self._done_at = time.monotonic()
         self.phase = "done"
 
@@ -276,7 +289,7 @@ class Hud:
         else:  # caret: track the text insertion point, static fallback
             caret = _caret_pos()
             if caret:
-                x, y = caret[0] + _CARET_OFFSET[0], caret[1] + _CARET_OFFSET[1]
+                x, y = caret[0] + CARET_DX, caret[1] + CARET_DY
             else:
                 x, y = self._anchor[0] + _OFFSET[0], self._anchor[1] + _OFFSET[1]
         vl, vt, vw, vh = _virtual_screen()
@@ -288,60 +301,69 @@ class Hud:
 
     def _text(self, x, y, s, fill, size=None, anchor="w"):
         """Thin light text: configured font, normal weight, no shadow. Negative
-        tk font size = pixels, so 8 renders as 8px regardless of screen DPI."""
-        self._canvas.create_text(
+        tk font size = pixels. Returns the right edge x so runs can be chained."""
+        item = self._canvas.create_text(
             x, y, text=s, fill=fill, font=(FONT, -(size or SIZE)), anchor=anchor)
+        return self._canvas.bbox(item)[2]
 
     def _tabular(self, x, y, s, fill, cell):
         """Draw each glyph centered in a fixed-width cell, so a digit changing
-        (1 -> 2) never shifts the string or anything after it. The even cell
-        also gives the numbers breathing room. Returns the end x."""
+        (1 -> 2) never shifts the string or anything after it, and the number
+        gets even spacing. Callers reserve a fixed field width so downstream
+        elements never move even when the number gains a digit."""
         for i, ch in enumerate(s):
             self._canvas.create_text(
                 x + i * cell + cell / 2.0, y, text=ch, fill=fill,
                 font=(FONT, -SIZE), anchor="c")
-        return x + len(s) * cell
+
+    def _dot(self, y, u):
+        """Small STATIC record dot (no animation). Off unless VOX_HUD_DOT=1."""
+        if not SHOW_DOT:
+            return u * 0.3
+        r = u * 0.34
+        cx = u * 1.0
+        self._canvas.create_oval(cx - r, y - r, cx + r, y + r,
+                                 fill="#d1605b", outline="")
+        return u * 2.0  # x where following content starts
 
     def _draw(self, phase):
         c = self._canvas
         c.delete("all")
         u = float(SIZE)
         y = _H // 2
+        cell = u * 0.66
         if phase == "rec":
-            # gently breathing record dot (small amplitude = unobtrusive)
-            pulse = 0.5 + 0.5 * math.sin(time.monotonic() * 3.2)
-            r = u * 0.42 + u * 0.13 * pulse
-            cx = u * 1.3
-            c.create_oval(cx - r, y - r, cx + r, y + r,
-                          fill="#d1605b", outline="")
-            # elapsed m:ss.t  (tenths only - calmer than milliseconds)
+            x0 = self._dot(y, u)
+            # seconds only, tenths, no leading zero / no minutes: 7.4, 92.6, 128.1
             el = max(0.0, time.monotonic() - self.t0)
-            stamp = f"{int(el // 60)}:{int(el % 60):02d}.{int(el * 10 % 10)}"
-            cell = u * 0.78
-            end = self._tabular(u * 2.5, y, stamp, "#f2f3f5", cell)
-            # mic meter: 5 bars over -55..-15 dBFS
-            mx = end + u * 0.9
-            step = u * 0.55
+            self._tabular(x0, y, f"{el:.1f}", "#f2f3f5", cell)
+            # meter at a FIXED offset (5-cell field) so it never shifts as the
+            # number grows past 10s / 100s
+            mx = x0 + 5 * cell + u * 0.6
+            step = u * 0.5
             lit = max(0, min(5, int((self.level_db + 55.0) / 40.0 * 5 + 0.5)))
             for i in range(5):
                 bx = mx + i * step
-                bh = u * 0.4 + i * (u * 0.3)
+                bh = u * 0.36 + i * (u * 0.28)
                 color = "#1d9e75" if i < lit else "#2c2f36"
-                c.create_rectangle(bx, y + u * 0.75, bx + max(1.0, u * 0.3),
-                                   y + u * 0.75 - bh, fill=color, outline="")
+                c.create_rectangle(bx, y + u * 0.7, bx + max(1.0, u * 0.28),
+                                   y + u * 0.7 - bh, fill=color, outline="")
             if self.level_db > -100:
-                self._text(mx + 5 * step + u * 0.8, y, f"{self.level_db:.0f}",
-                           "#8fa3ad", size=max(7, int(u * 0.85)))
+                self._text(mx + 5 * step + u * 0.7, y, f"{self.level_db:.0f}",
+                           "#8fa3ad", size=max(7, int(u * 0.82)))
         elif phase == "busy":
-            rr = u * 1.0
-            self._spin = (self._spin + 24) % 360
-            c.create_arc(u * 0.6, y - rr, u * 0.6 + 2 * rr, y + rr,
-                         start=self._spin, extent=250, style="arc",
-                         outline="#e0a83a", width=max(1, int(u * 0.22)))
-            self._text(u * 3.0, y, "transcribing…", "#e0d7c4")
+            # live release->paste latency clock, in yellow
+            x0 = self._dot(y, u)
+            lat = max(0.0, time.monotonic() - self._busy_t0)
+            self._tabular(x0, y, f"{lat:.1f}", "#e0a83a", cell)
         elif phase == "done":
-            self._text(u * 0.8, y, "✓", "#5dcaa5")
-            self._text(u * 2.6, y, self.stats, "#f2f3f5")
+            # freeze the final latency (yellow) + word/token count (light)
+            x0 = self._dot(y, u)
+            xend = self._text(x0, y, f"{self._latency:.1f}s", "#e0a83a")
+            rest = f"  {self._words} w"
+            if self._tokens:
+                rest += f"  {self._tokens} tok"
+            self._text(xend + u * 0.3, y, rest, "#c9ccd1")
 
 
 class NullHud:
