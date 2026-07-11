@@ -120,8 +120,8 @@ Configuration is via environment variables.
 | `VOX_LOG` | auto | Diagnostic log file (rotating, 512 KB × 2). Default `%LOCALAPPDATA%\vox\vox.log` (Linux: `~/.local/state/vox/vox.log`); set a path to move it or `0` to disable |
 | `VOX_TRANSCRIPT_DIR` | unset | Directory (e.g. an Obsidian folder) for a per-day markdown record of everything you dictate (`YYYY-MM-DD vox.md`, one `- **HH:MM** text` bullet per dictation). Unset = off |
 | `VOX_LLM` | `off` | Optional LLM cleanup pass. `local` = a local OpenAI-compatible server (Ollama; offline, no API key — **recommended**); `anthropic` = Claude via API (needs `ANTHROPIC_API_KEY`) |
-| `VOX_LLM_MODEL` | `llama3.2:3b` (local) / `claude-haiku-4-5` (anthropic) | Model for the cleanup pass |
-| `VOX_LLM_URL` | `http://localhost:11434/v1` | Local server's OpenAI-compatible base URL (Ollama default; works with LM Studio, llama.cpp `--api`, etc.) |
+| `VOX_LLM_MODEL` | `qwen2.5:1.5b-instruct` (local) / `claude-haiku-4-5` (anthropic) | Model for the cleanup pass. Local default is small + strongly instruction-following (~0.2s on a GPU); a bigger model (`qwen2.5:3b-instruct`) polishes more at some latency cost |
+| `VOX_LLM_URL` | `http://127.0.0.1:11434/v1` | Local server's OpenAI-compatible base URL (Ollama default; works with LM Studio, llama.cpp `--api`, etc.). Use `127.0.0.1`, not `localhost` — on Windows the latter stalls ~2s per request on IPv6 fallback |
 | `VOX_LLM_KEEPALIVE` | `30m` | Keep the local model resident between dictations so there's no reload latency (Ollama) |
 
 Example — force the tiny model on CPU:
@@ -142,12 +142,12 @@ By default Vox types the raw (offline) transcript. For Wispr-Flow-style polish �
 **Local (recommended — fully offline, no API key, low latency).** Runs against a local [Ollama](https://ollama.com) server on your own GPU:
 
 ```powershell
-winget install Ollama.Ollama    # once
-ollama pull llama3.2:3b         # a small, fast instruct model
+winget install Ollama.Ollama       # once
+ollama pull qwen2.5:1.5b-instruct  # small, fast, instruction-following
 setx VOX_LLM local
 ```
 
-Restart Vox. It POSTs the raw transcript to the local OpenAI-compatible endpoint (`VOX_LLM_URL`, default Ollama at `localhost:11434/v1`) using only the Python standard library — no extra package to install. The model stays resident (`VOX_LLM_KEEPALIVE`) so there's no per-dictation reload. Point `VOX_LLM_URL` at LM Studio or `llama.cpp --api` instead if you prefer. Pick a bigger model (`VOX_LLM_MODEL=llama3.1:8b`) for more polish at some latency cost.
+Restart Vox. It POSTs the raw transcript to the local OpenAI-compatible endpoint (`VOX_LLM_URL`, default Ollama at `127.0.0.1:11434/v1`) using only the Python standard library — no extra package to install. A warm pass is **~0.2s**; the model is pre-loaded at startup and stays resident (`VOX_LLM_KEEPALIVE`) so there's no per-dictation reload. Point `VOX_LLM_URL` at LM Studio or `llama.cpp --api` instead if you prefer. Model choice matters more than size here — pick one that *follows instructions* (returns cleaned text) rather than *chats back*; `qwen2.5:1.5b-instruct` is the tested default, `qwen2.5:3b-instruct` polishes a bit more. Avoid `llama3.2:3b` — it tends to reply to the transcript instead of cleaning it.
 
 **Anthropic (cloud).** Highest quality, needs a key and internet:
 
