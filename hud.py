@@ -1,10 +1,10 @@
 """Floating dictation HUD for Vox (Windows).
 
-A tiny always-on-top overlay that follows the mouse cursor while you hold the
-push-to-talk chord: a pulsing record dot, a live elapsed timer (m:ss.mmm), and
-a mic level meter driven by the actual audio callback. On release it switches
-to a "transcribing" spinner, then flashes the result stats (words / seconds /
-LLM tokens) for a moment and disappears.
+A tiny always-on-top overlay anchored to the text caret while you hold the
+push-to-talk chord: a red plus marking the insertion point, a live elapsed
+timer (seconds) and a mic level meter. On release the timer turns into a yellow
+release-to-paste latency clock, then freezes that latency plus the word/token
+count for a moment and disappears.
 
 Design constraints, in order:
   - NEVER interfere with dictation. The window is click-through
@@ -17,11 +17,8 @@ Design constraints, in order:
     plain attributes on the Hud object (atomic under the GIL) that the tk
     thread polls at ~30 fps.
 
-Text is drawn twice (black shadow + bright fill) so it stays readable over
-both light and dark backgrounds without an opaque panel.
-
-Disable with VOX_HUD=0. VOX_HUD_ANCHOR=corner pins it to the bottom-right of
-the primary screen instead of following the cursor.
+Thin light text (Segoe UI Light), no panel. Everything is env-tunable - see the
+VOX_HUD_* config block below. Disable entirely with VOX_HUD=0.
 """
 
 import ctypes
@@ -47,17 +44,31 @@ try:
     SIZE = int(os.environ.get("VOX_HUD_SIZE", "13"))  # pixels (tk negative size)
 except ValueError:
     SIZE = 13
-# The record dot is off by default now - the timer's presence (and color) is
-# enough to show state. VOX_HUD_DOT=1 brings back a small STATIC dot.
+# Leading marker: a red plus/crosshair that lands on the caret (VOX_HUD_PLUS=1,
+# default). VOX_HUD_DOT=1 uses a small static dot instead; set both off for none.
+PLUS = os.environ.get("VOX_HUD_PLUS", "1").strip().lower() in ("1", "true", "on", "yes")
 SHOW_DOT = os.environ.get("VOX_HUD_DOT", "0").strip().lower() in ("1", "true", "on", "yes")
 try:
-    CARET_DX = int(os.environ.get("VOX_HUD_DX", "6"))   # px right of the caret
+    PLUS_SIZE = int(os.environ.get("VOX_HUD_PLUS_SIZE", "9"))    # full arm length, px
 except ValueError:
-    CARET_DX = 6
+    PLUS_SIZE = 9
 try:
-    CARET_DY = int(os.environ.get("VOX_HUD_DY", "4"))   # px below the caret
+    PLUS_THICK = int(os.environ.get("VOX_HUD_PLUS_THICK", "2"))  # line thickness, px
 except ValueError:
-    CARET_DY = 4
+    PLUS_THICK = 2
+# DX/DY position the marker CENTER relative to the caret (0,0 = right on it).
+try:
+    CARET_DX = int(os.environ.get("VOX_HUD_DX", "4"))
+except ValueError:
+    CARET_DX = 4
+try:
+    CARET_DY = int(os.environ.get("VOX_HUD_DY", "0"))
+except ValueError:
+    CARET_DY = 0
+
+# The marker center's fixed x within the window; the window is positioned so
+# this point lands on the caret (+ DX/DY), so DX/DY move the plus precisely.
+_MARK_CX = 12
 
 
 def _opacity():
@@ -285,13 +296,15 @@ class Hud:
             x, y = sw - _W - 24, sh - _H - 64
         elif ANCHOR == "cursor":
             cx, cy = _cursor_pos()
-            x, y = cx + _OFFSET[0], cy + _OFFSET[1]
+            x = cx + _OFFSET[0] - _MARK_CX
+            y = cy + _OFFSET[1] - _H // 2
         else:  # caret: track the text insertion point, static fallback
             caret = _caret_pos()
-            if caret:
-                x, y = caret[0] + CARET_DX, caret[1] + CARET_DY
-            else:
-                x, y = self._anchor[0] + _OFFSET[0], self._anchor[1] + _OFFSET[1]
+            ax, ay = caret if caret else (self._anchor[0] + _OFFSET[0],
+                                          self._anchor[1] + _OFFSET[1])
+            # Place the window so the marker center lands on the caret (+DX/DY).
+            x = ax + CARET_DX - _MARK_CX
+            y = ay + CARET_DY - _H // 2
         vl, vt, vw, vh = _virtual_screen()
         x = max(vl, min(x, vl + vw - _W))
         y = max(vt, min(y, vt + vh - _H))
@@ -316,15 +329,25 @@ class Hud:
                 x + i * cell + cell / 2.0, y, text=ch, fill=fill,
                 font=(FONT, -SIZE), anchor="c")
 
-    def _dot(self, y, u):
-        """Small STATIC record dot (no animation). Off unless VOX_HUD_DOT=1."""
-        if not SHOW_DOT:
-            return u * 0.3
-        r = u * 0.34
-        cx = u * 1.0
-        self._canvas.create_oval(cx - r, y - r, cx + r, y + r,
-                                 fill="#d1605b", outline="")
-        return u * 2.0  # x where following content starts
+    def _marker(self, y, u):
+        """Leading marker at the caret: a red plus (default), a static dot, or
+        nothing. Returns the x where the trailing timer/text should start."""
+        cx = float(_MARK_CX)
+        if PLUS:
+            half = PLUS_SIZE / 2.0
+            w = max(1, PLUS_THICK)
+            c = self._canvas
+            c.create_line(cx, y - half, cx, y + half, fill="#e2504a",
+                          width=w, capstyle="projecting")
+            c.create_line(cx - half, y, cx + half, y, fill="#e2504a",
+                          width=w, capstyle="projecting")
+            return cx + half + u * 0.45
+        if SHOW_DOT:
+            r = u * 0.34
+            self._canvas.create_oval(cx - r, y - r, cx + r, y + r,
+                                     fill="#d1605b", outline="")
+            return cx + r + u * 0.45
+        return cx + u * 0.3
 
     def _draw(self, phase):
         c = self._canvas
@@ -333,7 +356,7 @@ class Hud:
         y = _H // 2
         cell = u * 0.66
         if phase == "rec":
-            x0 = self._dot(y, u)
+            x0 = self._marker(y, u)
             # seconds only, tenths, no leading zero / no minutes: 7.4, 92.6, 128.1
             el = max(0.0, time.monotonic() - self.t0)
             self._tabular(x0, y, f"{el:.1f}", "#f2f3f5", cell)
@@ -353,12 +376,12 @@ class Hud:
                            "#8fa3ad", size=max(7, int(u * 0.82)))
         elif phase == "busy":
             # live release->paste latency clock, in yellow
-            x0 = self._dot(y, u)
+            x0 = self._marker(y, u)
             lat = max(0.0, time.monotonic() - self._busy_t0)
             self._tabular(x0, y, f"{lat:.1f}", "#e0a83a", cell)
         elif phase == "done":
             # freeze the final latency (yellow) + word/token count (light)
-            x0 = self._dot(y, u)
+            x0 = self._marker(y, u)
             xend = self._text(x0, y, f"{self._latency:.1f}s", "#e0a83a")
             rest = f"  {self._words} w"
             if self._tokens:
