@@ -135,11 +135,15 @@ DICT_PATH = os.environ.get(
 # Prompt that encourages proper punctuation from whisper
 INITIAL_PROMPT = "Hello, how are you? I'm doing well. Let's discuss the project."
 
-# Filler words/phrases to strip (order matters - longer phrases first)
+# Filler words/phrases to strip (order matters - longer phrases first). These
+# are blunt substring replacements, so only list forms that are ALWAYS filler:
+# the comma-delimited variants ("I mean,", "you know,"). The bare forms are
+# omitted deliberately - "I mean it" / "you know Sarah" are real speech, and the
+# optional LLM cleanup pass removes conversational filler far more safely.
 FILLERS = [
     "you know what I mean", "you know what i mean",
-    "I mean,", "i mean,", "I mean", "i mean",
-    "you know,", "You know,", "you know", "You know",
+    "I mean,", "i mean,",
+    "you know,", "You know,",
     ", like,", ", Like,",
     "like,", "Like,",
     ", um,", ", Um,", ", uh,", ", Uh,",
@@ -550,6 +554,8 @@ def _llm_format_local(text, system):
     )
     with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
         data = json.loads(resp.read().decode("utf-8"))
+    global last_llm_tokens
+    last_llm_tokens = (data.get("usage") or {}).get("total_tokens")
     return data["choices"][0]["message"]["content"].strip()
 
 
@@ -591,6 +597,34 @@ def warm_llm():
     threading.Thread(target=_warm, daemon=True).start()
 
 
+_WORD_RE = re.compile(r"[a-z0-9']+")
+
+
+def _looks_like_reply(raw, cleaned):
+    """True when the LLM answered the transcript instead of cleaning it.
+
+    A faithful cleanup only re-cases, re-punctuates, drops fillers, and honors
+    spoken commands - so every word it emits (bar the odd homophone fix) is a
+    word the speaker already said. A chat-leak ("Sure, I can help with that...")
+    is built from NEW vocabulary. So the sole signal is the NOVEL-word fraction:
+    words in the output that never appear in the input.
+
+    Crucially this is measured on words present/absent, NOT on length, so it is
+    immune to the two things that make length brittle - legitimate deletions
+    ("...scratch that..." collapsing a sentence) and ordinary repeated speech
+    ("no, no, I said no") both keep the novel fraction at zero. Requiring at
+    least a couple of novel words as well as a high fraction keeps a one-word
+    homophone fix on a short dictation from tripping it. False positives are
+    cheap: the caller falls back to the raw transcript, losing only the polish.
+    """
+    raw_words = set(_WORD_RE.findall(raw.lower()))
+    out_words = _WORD_RE.findall(cleaned.lower())
+    if not raw_words or not out_words:
+        return False
+    novel = sum(1 for w in out_words if w not in raw_words)
+    return novel >= 2 and novel / len(out_words) > 0.5
+
+
 def llm_format(text):
     """Optional Wispr-style cleanup: polish the raw transcript with an LLM.
 
@@ -598,7 +632,8 @@ def llm_format(text):
     server - offline, no API key; "anthropic" uses Claude. Fixes
     grammar/punctuation/capitalization, drops fillers and false starts, and obeys
     spoken commands. On offline/timeout/any error it returns the input unchanged,
-    so a dictation is never lost.
+    so a dictation is never lost; a response that fails the reply-detection guard
+    is likewise discarded in favor of the raw text.
     """
     if LLM_BACKEND in ("off", "") or not text.strip():
         return text
@@ -611,6 +646,10 @@ def llm_format(text):
             cleaned = _llm_format_anthropic(text, system)
         else:
             log(f">> Unknown VOX_LLM={LLM_BACKEND!r}; using raw text")
+            return text
+        if cleaned and _looks_like_reply(text, cleaned):
+            log(f">> LLM cleanup rejected (reply-like output: {cleaned[:80]!r}); "
+                "using raw text")
             return text
         log(f">> LLM cleanup ({LLM_BACKEND}) in {time.monotonic() - t0:.2f}s")
         return cleaned or text
@@ -672,6 +711,13 @@ model = None
 supports_hotwords = False
 lock = threading.Lock()
 target_window = None
+last_llm_tokens = None
+
+# Floating cursor HUD (timer + mic meter while recording). NullHud when
+# disabled (VOX_HUD=0), non-Windows, or if tkinter fails - call sites are
+# unconditional. Created in main() so a HUD problem can't break import.
+import hud as _hud_mod
+hud = _hud_mod.NullHud()
 
 
 # --- Platform I/O: active window + text output --------------------------------
@@ -784,6 +830,9 @@ def start_recording():
         if status:
             overflow_count += 1
         audio_frames.append(indata.copy())
+        # Live level for the HUD meter. One RMS over a ~26ms block is cheap;
+        # feed_level never raises, so the capture path stays safe.
+        hud.feed_level(float(np.sqrt(np.mean(indata.astype(np.float64) ** 2))))
 
     stream = sd.InputStream(
         samplerate=SAMPLE_RATE,
@@ -799,6 +848,7 @@ def start_recording():
         mic = sd.query_devices(sd.default.device[0])["name"]
     except Exception:
         mic = "unknown"
+    hud.recording()
     log(f">> RECORDING - speak now... (mic: {mic})")
 
 
@@ -819,8 +869,13 @@ def transcribe_audio(audio, with_hotwords=True):
 
 def stop_and_transcribe():
     """Stop recording, transcribe, and type the result."""
-    global recording, stream
+    global recording, stream, last_llm_tokens
 
+    # Tag every HUD update with this dictation's session, so a slow transcription
+    # finishing after the user re-pressed the chord can't stomp the new recording.
+    hud_gen = hud.session()
+    hud.busy(hud_gen)
+    last_llm_tokens = None
     # Grace tail: keep capturing for a beat after release so trailing words
     # aren't clipped by release timing or the final audio block being dropped
     # when the stream stops. The recording callback keeps appending while we wait.
@@ -836,6 +891,7 @@ def stop_and_transcribe():
 
     frames = list(audio_frames)
     if not frames:
+        hud.idle(hud_gen)
         log(">> No audio captured.")
         return
 
@@ -883,8 +939,11 @@ def stop_and_transcribe():
     if text:
         log(f">> Result: {text}")
         type_text(text, target_window)
+        hud.done(words=len(text.split()), secs=duration,
+                 tokens=last_llm_tokens, gen=hud_gen)
         record_transcript(text)
     else:
+        hud.idle(hud_gen)
         log(">> No speech detected.")
 
 
@@ -987,8 +1046,10 @@ else:
 
 
 def main():
+    global hud
     load_model()
     warm_llm()  # background pre-load of the local cleanup model (no-op if off)
+    hud = _hud_mod.create(log)  # floating cursor HUD (NullHud when disabled)
 
     print("", flush=True)
     log("=== Vox ready ===")

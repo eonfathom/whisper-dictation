@@ -117,6 +117,8 @@ Configuration is via environment variables.
 | `VOX_COMPUTE` | auto | `float16` on GPU, `int8` on CPU. Override with `float16`/`int8`/`float32`. |
 | `VOX_DICT` | `dictionary.json` | Path to the personal dictionary file |
 | `VOX_STRIP_PHANTOMS` | `1` | Strip hallucinated trailing hotword echoes from the transcript. Set `0` to disable |
+| `VOX_HUD` | `1` | Floating dictation HUD (Windows): a click-through overlay at the mouse cursor with a pulsing record dot, live elapsed timer, and mic level meter while you hold the chord; then a transcribing spinner and a brief `words · seconds · tokens` result flash. `0` to disable |
+| `VOX_HUD_ANCHOR` | `cursor` | `corner` pins the HUD to the bottom-right of the primary screen instead of following the cursor |
 | `VOX_LOG` | auto | Diagnostic log file (rotating, 512 KB × 2). Default `%LOCALAPPDATA%\vox\vox.log` (Linux: `~/.local/state/vox/vox.log`); set a path to move it or `0` to disable |
 | `VOX_TRANSCRIPT_DIR` | unset | Directory (e.g. an Obsidian folder) for a per-day markdown record of everything you dictate (`YYYY-MM-DD vox.md`, one `- **HH:MM** text` bullet per dictation). Unset = off |
 | `VOX_LLM` | `off` | Optional LLM cleanup pass. `local` = a local OpenAI-compatible server (Ollama; offline, no API key — **recommended**); `anthropic` = Claude via API (needs `ANTHROPIC_API_KEY`) |
