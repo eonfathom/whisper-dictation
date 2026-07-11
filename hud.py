@@ -34,27 +34,40 @@ IS_WINDOWS = os.name == "nt"
 ENABLED = os.environ.get("VOX_HUD", "1").strip().lower() not in (
     "0", "false", "off", "no",
 )
-ANCHOR = os.environ.get("VOX_HUD_ANCHOR", "cursor").strip().lower()
+# Placement: "caret" anchors to the text insertion point where available and
+# falls back to a static position captured at record-start (never chases the
+# mouse); "cursor" follows the mouse live (old behavior); "corner" pins to the
+# primary screen's bottom-right.
+ANCHOR = os.environ.get("VOX_HUD_ANCHOR", "caret").strip().lower()
+
+# Thin by design: Segoe UI Light, small, normal weight, no shadow. All tunable
+# live via env so styling doesn't need a code change.
+FONT = os.environ.get("VOX_HUD_FONT", "Segoe UI Light")
+try:
+    SIZE = int(os.environ.get("VOX_HUD_SIZE", "8"))   # pixels (see negative-size note)
+except ValueError:
+    SIZE = 8
 
 
 def _opacity():
-    """Whole-overlay opacity, 0.05..1.0 (VOX_HUD_OPACITY, default 0.5).
+    """Whole-overlay opacity, 0.05..1.0 (VOX_HUD_OPACITY, default 1.0).
 
-    Applied as a layered-window alpha over everything drawn, so the meter,
-    timer, and dot all dim together and the HUD reads as a faint ghost rather
-    than a solid widget. Clamped so a typo can't make it invisible or opaque."""
+    Applied as a layered-window alpha over everything drawn. The thin 8px light
+    text is already subtle; lower this if you want it fainter. Clamped so a typo
+    can't make it invisible or fully opaque-and-heavy."""
     try:
-        return max(0.05, min(1.0, float(os.environ.get("VOX_HUD_OPACITY", "0.5"))))
+        return max(0.05, min(1.0, float(os.environ.get("VOX_HUD_OPACITY", "1.0"))))
     except ValueError:
-        return 0.5
+        return 1.0
 
 # The transparent-color key: every pixel painted this exact color becomes a
 # hole in the window. Chosen to be a color no HUD element ever uses.
 _KEY = "#010203"
 _FPS_MS = 33          # ~30 fps poll/redraw
 _DONE_SECS = 1.6      # how long the result stats linger
-_W, _H = 240, 44      # canvas size; roomy enough for m:ss.mmm + meter
-_OFFSET = (18, 26)    # HUD position relative to the mouse cursor
+_W, _H = 240, 44      # canvas size
+_OFFSET = (18, 26)    # HUD position relative to the mouse cursor (cursor mode)
+_CARET_OFFSET = (14, 6)   # below-right of the text caret, so it clears the line
 
 # Windows extended-style bits for a ghost window.
 _GWL_EXSTYLE = -20
@@ -68,10 +81,49 @@ class _Point(ctypes.Structure):
     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
 
+class _Rect(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+class _GuiThreadInfo(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong), ("flags", ctypes.c_ulong),
+                ("hwndActive", ctypes.c_void_p), ("hwndFocus", ctypes.c_void_p),
+                ("hwndCapture", ctypes.c_void_p), ("hwndMenuOwner", ctypes.c_void_p),
+                ("hwndMoveSize", ctypes.c_void_p), ("hwndCaret", ctypes.c_void_p),
+                ("rcCaret", _Rect)]
+
+
 def _cursor_pos():
     pt = _Point()
     ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
     return pt.x, pt.y
+
+
+def _caret_pos():
+    """Screen (x, y) of the focused window's text caret, or None.
+
+    Works in native Win32 controls via GetGUIThreadInfo. Chromium/Electron apps
+    (browsers, Obsidian, VS Code) draw their own caret the OS can't see, so this
+    returns None there and the caller falls back to a static anchor. Bottom-left
+    of the caret rect is used so the HUD sits just under the current line."""
+    try:
+        u = ctypes.windll.user32
+        fg = u.GetForegroundWindow()
+        if not fg:
+            return None
+        tid = u.GetWindowThreadProcessId(fg, None)
+        gti = _GuiThreadInfo()
+        gti.cbSize = ctypes.sizeof(gti)
+        if not u.GetGUIThreadInfo(tid, ctypes.byref(gti)) or not gti.hwndCaret:
+            return None
+        pt = _Point(gti.rcCaret.left, gti.rcCaret.bottom)
+        u.ClientToScreen(gti.hwndCaret, ctypes.byref(pt))
+        if pt.x == 0 and pt.y == 0:
+            return None
+        return pt.x, pt.y
+    except Exception:
+        return None
 
 
 def _virtual_screen():
@@ -91,6 +143,7 @@ class Hud:
         self.level_db = -120.0     # latest mic RMS in dBFS
         self.stats = ""            # e.g. "42 w · 7.4s · 128 tok"
         self._done_at = 0.0
+        self._anchor = (0, 0)      # static fallback position (mouse at rec start)
         # Session generation: each recording() bumps it; busy()/done()/idle()
         # from a superseded session (a slow transcription finishing after the
         # user re-pressed the chord) carry an older gen and are ignored, so a
@@ -111,6 +164,13 @@ class Hud:
         """Begin a new session; returns its generation for busy()/done()/idle()."""
         self.t0 = time.monotonic()
         self.level_db = -120.0
+        # Static fallback anchor: where the mouse is at record-start. Used only
+        # when no caret is available, and captured ONCE so the HUD holds still
+        # instead of chasing the mouse.
+        try:
+            self._anchor = _cursor_pos() if IS_WINDOWS else (0, 0)
+        except Exception:
+            self._anchor = (0, 0)
         self._gen += 1
         self.phase = "rec"
         return self._gen
@@ -210,56 +270,78 @@ class Hud:
             sw = self._root.winfo_screenwidth()
             sh = self._root.winfo_screenheight()
             x, y = sw - _W - 24, sh - _H - 64
-        else:
+        elif ANCHOR == "cursor":
             cx, cy = _cursor_pos()
             x, y = cx + _OFFSET[0], cy + _OFFSET[1]
-            vl, vt, vw, vh = _virtual_screen()
-            x = max(vl, min(x, vl + vw - _W))
-            y = max(vt, min(y, vt + vh - _H))
+        else:  # caret: track the text insertion point, static fallback
+            caret = _caret_pos()
+            if caret:
+                x, y = caret[0] + _CARET_OFFSET[0], caret[1] + _CARET_OFFSET[1]
+            else:
+                x, y = self._anchor[0] + _OFFSET[0], self._anchor[1] + _OFFSET[1]
+        vl, vt, vw, vh = _virtual_screen()
+        x = max(vl, min(x, vl + vw - _W))
+        y = max(vt, min(y, vt + vh - _H))
         self._root.geometry(f"{_W}x{_H}+{x}+{y}")
 
     # ---- drawing ------------------------------------------------------------
 
-    def _text(self, x, y, s, fill, size=13, anchor="w"):
-        font = ("Consolas", size, "bold")
-        c = self._canvas
-        c.create_text(x + 1, y + 1, text=s, fill="#000000",
-                      font=font, anchor=anchor)
-        c.create_text(x, y, text=s, fill=fill, font=font, anchor=anchor)
+    def _text(self, x, y, s, fill, size=None, anchor="w"):
+        """Thin light text: configured font, normal weight, no shadow. Negative
+        tk font size = pixels, so 8 renders as 8px regardless of screen DPI."""
+        self._canvas.create_text(
+            x, y, text=s, fill=fill, font=(FONT, -(size or SIZE)), anchor=anchor)
+
+    def _tabular(self, x, y, s, fill, cell):
+        """Draw each glyph centered in a fixed-width cell, so a digit changing
+        (1 -> 2) never shifts the string or anything after it. The even cell
+        also gives the numbers breathing room. Returns the end x."""
+        for i, ch in enumerate(s):
+            self._canvas.create_text(
+                x + i * cell + cell / 2.0, y, text=ch, fill=fill,
+                font=(FONT, -SIZE), anchor="c")
+        return x + len(s) * cell
 
     def _draw(self, phase):
         c = self._canvas
         c.delete("all")
+        u = float(SIZE)
         y = _H // 2
         if phase == "rec":
             # gently breathing record dot (small amplitude = unobtrusive)
             pulse = 0.5 + 0.5 * math.sin(time.monotonic() * 3.2)
-            r = 4.5 + 1.0 * pulse
-            c.create_oval(12 - r, y - r, 12 + r, y + r,
+            r = u * 0.42 + u * 0.13 * pulse
+            cx = u * 1.3
+            c.create_oval(cx - r, y - r, cx + r, y + r,
                           fill="#d1605b", outline="")
-            # elapsed m:ss.mmm
+            # elapsed m:ss.t  (tenths only - calmer than milliseconds)
             el = max(0.0, time.monotonic() - self.t0)
-            stamp = f"{int(el // 60)}:{int(el % 60):02d}.{int(el * 1000 % 1000):03d}"
-            self._text(26, y, stamp, "#f2f3f5", size=14)
-            # mic meter: 7 bars over -55..-15 dBFS
-            lit = max(0, min(7, int((self.level_db + 55.0) / 40.0 * 7 + 0.5)))
-            for i in range(7):
-                bx = 138 + i * 9
-                bh = 5 + i * 2.4
+            stamp = f"{int(el // 60)}:{int(el % 60):02d}.{int(el * 10 % 10)}"
+            cell = u * 0.78
+            end = self._tabular(u * 2.5, y, stamp, "#f2f3f5", cell)
+            # mic meter: 5 bars over -55..-15 dBFS
+            mx = end + u * 0.9
+            step = u * 0.55
+            lit = max(0, min(5, int((self.level_db + 55.0) / 40.0 * 5 + 0.5)))
+            for i in range(5):
+                bx = mx + i * step
+                bh = u * 0.4 + i * (u * 0.3)
                 color = "#1d9e75" if i < lit else "#2c2f36"
-                c.create_rectangle(bx, y + 9, bx + 6, y + 9 - bh,
-                                   fill=color, outline="")
-            db = f"{self.level_db:.0f}" if self.level_db > -100 else "-inf"
-            self._text(206, y, db, "#8fa3ad", size=10)
+                c.create_rectangle(bx, y + u * 0.75, bx + max(1.0, u * 0.3),
+                                   y + u * 0.75 - bh, fill=color, outline="")
+            if self.level_db > -100:
+                self._text(mx + 5 * step + u * 0.8, y, f"{self.level_db:.0f}",
+                           "#8fa3ad", size=max(7, int(u * 0.85)))
         elif phase == "busy":
-            # rotating spinner arc
+            rr = u * 1.0
             self._spin = (self._spin + 24) % 360
-            c.create_arc(6, y - 8, 22, y + 8, start=self._spin, extent=250,
-                         style="arc", outline="#e0a83a", width=3)
-            self._text(30, y, "transcribing…", "#e0d7c4", size=12)
+            c.create_arc(u * 0.6, y - rr, u * 0.6 + 2 * rr, y + rr,
+                         start=self._spin, extent=250, style="arc",
+                         outline="#e0a83a", width=max(1, int(u * 0.22)))
+            self._text(u * 3.0, y, "transcribing…", "#e0d7c4")
         elif phase == "done":
-            self._text(8, y, "✓", "#5dcaa5", size=14)
-            self._text(24, y, self.stats, "#f2f3f5", size=13)
+            self._text(u * 0.8, y, "✓", "#5dcaa5")
+            self._text(u * 2.6, y, self.stats, "#f2f3f5")
 
 
 class NullHud:
