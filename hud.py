@@ -89,7 +89,13 @@ def _opacity():
 # hole in the window. Chosen to be a color no HUD element ever uses.
 _KEY = "#010203"
 _FPS_MS = 33          # ~30 fps poll/redraw
-_DONE_SECS = 1.6      # how long the result stats linger
+# How long the frozen result readout (latency + word count) stays on screen
+# after the paste, then auto-clears. NOT the latency itself - just the linger.
+# VOX_HUD_DONE_SECS=0 clears it immediately (no result flash).
+try:
+    _DONE_SECS = max(0.0, float(os.environ.get("VOX_HUD_DONE_SECS", "0.9")))
+except ValueError:
+    _DONE_SECS = 0.9
 # The window is a generous transparent canvas (click-through, so the empty
 # space costs nothing) with the caret mapped to a fixed interior point; both
 # the plus and the timer are then drawn at their own caret-relative offsets.
