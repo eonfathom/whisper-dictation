@@ -28,6 +28,8 @@ import re
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 import wave
 
 import numpy as np
@@ -52,13 +54,28 @@ LANGUAGE = os.environ.get("VOX_LANG", "en")
 SAMPLE_RATE = 16000
 CHANNELS = 1
 
-# Optional LLM cleanup pass (Wispr-style). Off by default. Set VOX_LLM=anthropic
-# (with an ANTHROPIC_API_KEY) to polish the raw transcript with Claude before it's
-# typed. Any failure/offline falls back to the raw text - a dictation is never lost.
-# Model defaults to fast Haiku for low latency; override with VOX_LLM_MODEL.
+# Optional LLM cleanup pass (Wispr-style). Off by default. Fixes punctuation,
+# capitalization, fillers, false starts, and honors spoken commands. Any
+# failure/offline/timeout falls back to the raw text - a dictation is never lost.
+#   VOX_LLM=local     -> a LOCAL OpenAI-compatible server (Ollama by default);
+#                        fully offline, no API key, low latency. RECOMMENDED.
+#   VOX_LLM=anthropic -> Claude via the Anthropic API (needs ANTHROPIC_API_KEY).
+# VOX_LLM_URL points at the local server's OpenAI-compatible base (default
+# Ollama). VOX_LLM_MODEL picks the model; the local default is a small, fast
+# instruct model. VOX_LLM_KEEPALIVE keeps the model resident between dictations
+# so there's no reload latency (Ollama-specific, ignored elsewhere).
 LLM_BACKEND = os.environ.get("VOX_LLM", "off").lower()
-LLM_MODEL = os.environ.get("VOX_LLM_MODEL", "claude-haiku-4-5")
-LLM_TIMEOUT = float(os.environ.get("VOX_LLM_TIMEOUT", "8"))
+_LOCAL_BACKENDS = ("local", "ollama", "openai-compatible")
+_DEFAULT_MODEL = (
+    "llama3.2:3b" if LLM_BACKEND in _LOCAL_BACKENDS else "claude-haiku-4-5"
+)
+LLM_MODEL = os.environ.get("VOX_LLM_MODEL", _DEFAULT_MODEL)
+LLM_URL = os.environ.get("VOX_LLM_URL", "http://localhost:11434/v1").rstrip("/")
+LLM_KEEPALIVE = os.environ.get("VOX_LLM_KEEPALIVE", "30m")
+# Generous default: the fallback on timeout is the raw transcript (never lost),
+# so the only cost of a high ceiling is how long a genuinely stuck request waits.
+# A warm local 3B cleans a normal dictation in ~2s; long ones need headroom.
+LLM_TIMEOUT = float(os.environ.get("VOX_LLM_TIMEOUT", "20"))
 
 # Push-to-talk chord: hold all these modifiers together to record. Override via
 # VOX_HOTKEY, e.g. "ctrl+alt" or "ctrl+shift". Supported modifiers:
@@ -442,43 +459,117 @@ def clean_text(text):
     return text.strip()
 
 
+def _cleanup_system_prompt():
+    """Shared instruction for both the local and Anthropic cleanup backends."""
+    keep = ""
+    if HOTWORDS:
+        keep = (
+            " Reference spellings, to be used ONLY where the transcript"
+            " already contains these terms: " + ", ".join(HOTWORDS) + "."
+            " Never insert or append them anywhere else; if the transcript"
+            " ends abruptly, leave the ending exactly as it is."
+        )
+    return (
+        "You are a dictation cleanup engine. Turn raw speech-to-text into "
+        "polished written text: fix capitalization, punctuation, and obvious "
+        "mis-transcriptions; remove fillers and false starts; honor spoken "
+        "commands (new paragraph, new line, scratch that). Output ONLY the "
+        "cleaned text - no preamble, quotes, or commentary." + keep
+    )
+
+
+def _llm_format_local(text, system):
+    """Cleanup via a LOCAL OpenAI-compatible chat endpoint (Ollama etc.).
+
+    Stdlib-only (urllib), so no extra dependency and nothing to install in the
+    venv. Deterministic (temperature 0) and offline. keep_alive keeps the model
+    resident on Ollama so there's no per-dictation reload; harmless on servers
+    that ignore the field.
+    """
+    payload = {
+        "model": LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": text},
+        ],
+        "temperature": 0,
+        "stream": False,
+        "keep_alive": LLM_KEEPALIVE,
+    }
+    req = urllib.request.Request(
+        LLM_URL + "/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return data["choices"][0]["message"]["content"].strip()
+
+
+def _llm_format_anthropic(text, system):
+    """Cleanup via the Anthropic API (needs ANTHROPIC_API_KEY). Uses the SDK."""
+    import anthropic
+    client = anthropic.Anthropic(max_retries=0, timeout=LLM_TIMEOUT)
+    msg = client.messages.create(
+        model=LLM_MODEL,
+        max_tokens=4000,
+        system=system,
+        messages=[{"role": "user", "content": text}],
+    )
+    return "".join(b.text for b in msg.content if b.type == "text").strip()
+
+
+def warm_llm():
+    """Pre-load the local cleanup model so the FIRST dictation isn't slow.
+
+    A cold Ollama model load is many seconds (weights into VRAM); without this
+    the first real dictation would block or time out and fall back to raw text.
+    Runs in a background thread at startup so it never delays readiness, and is
+    best-effort - if the server isn't up yet it just logs and moves on (the
+    first dictation pays the load cost instead). Local backend only.
+    """
+    if LLM_BACKEND not in _LOCAL_BACKENDS:
+        return
+
+    def _warm():
+        try:
+            t0 = time.monotonic()
+            _llm_format_local("ok", _cleanup_system_prompt())
+            log(f">> LLM warm-up done in {time.monotonic() - t0:.1f}s "
+                f"({LLM_MODEL} resident)")
+        except Exception as e:
+            log(f">> LLM warm-up skipped ({e.__class__.__name__}); "
+                "first dictation will load the model")
+
+    threading.Thread(target=_warm, daemon=True).start()
+
+
 def llm_format(text):
     """Optional Wispr-style cleanup: polish the raw transcript with an LLM.
 
-    Enabled only when VOX_LLM="anthropic". Fixes grammar/punctuation/capitalization,
-    drops fillers and false starts, and obeys spoken commands ("new paragraph",
-    "scratch that"). On a missing key, offline, timeout, or any error it returns the
-    input unchanged, so a dictation is never lost. Uses the official Anthropic SDK.
+    Off unless VOX_LLM is set: "local" (default) uses a local OpenAI-compatible
+    server - offline, no API key; "anthropic" uses Claude. Fixes
+    grammar/punctuation/capitalization, drops fillers and false starts, and obeys
+    spoken commands. On offline/timeout/any error it returns the input unchanged,
+    so a dictation is never lost.
     """
-    if LLM_BACKEND != "anthropic" or not text.strip():
+    if LLM_BACKEND in ("off", "") or not text.strip():
         return text
+    t0 = time.monotonic()
     try:
-        import anthropic
-        client = anthropic.Anthropic(max_retries=0, timeout=LLM_TIMEOUT)
-        keep = ""
-        if HOTWORDS:
-            keep = (
-                " Reference spellings, to be used ONLY where the transcript"
-                " already contains these terms: " + ", ".join(HOTWORDS) + "."
-                " Never insert or append them anywhere else; if the transcript"
-                " ends abruptly, leave the ending exactly as it is."
-            )
-        msg = client.messages.create(
-            model=LLM_MODEL,
-            max_tokens=4000,
-            system=(
-                "You are a dictation cleanup engine. Turn raw speech-to-text into "
-                "polished written text: fix capitalization, punctuation, and obvious "
-                "mis-transcriptions; remove fillers and false starts; honor spoken "
-                "commands (new paragraph, new line, scratch that). Output ONLY the "
-                "cleaned text - no preamble, quotes, or commentary." + keep
-            ),
-            messages=[{"role": "user", "content": text}],
-        )
-        cleaned = "".join(b.text for b in msg.content if b.type == "text").strip()
+        system = _cleanup_system_prompt()
+        if LLM_BACKEND in _LOCAL_BACKENDS:
+            cleaned = _llm_format_local(text, system)
+        elif LLM_BACKEND == "anthropic":
+            cleaned = _llm_format_anthropic(text, system)
+        else:
+            log(f">> Unknown VOX_LLM={LLM_BACKEND!r}; using raw text")
+            return text
+        log(f">> LLM cleanup ({LLM_BACKEND}) in {time.monotonic() - t0:.2f}s")
         return cleaned or text
     except Exception as e:
-        log(f">> LLM cleanup skipped ({e.__class__.__name__}); using raw text")
+        log(f">> LLM cleanup skipped ({e.__class__.__name__}: {e}); using raw text")
         return text
 
 
@@ -851,6 +942,7 @@ else:
 
 def main():
     load_model()
+    warm_llm()  # background pre-load of the local cleanup model (no-op if off)
 
     print("", flush=True)
     log("=== Vox ready ===")

@@ -119,8 +119,10 @@ Configuration is via environment variables.
 | `VOX_STRIP_PHANTOMS` | `1` | Strip hallucinated trailing hotword echoes from the transcript. Set `0` to disable |
 | `VOX_LOG` | auto | Diagnostic log file (rotating, 512 KB × 2). Default `%LOCALAPPDATA%\vox\vox.log` (Linux: `~/.local/state/vox/vox.log`); set a path to move it or `0` to disable |
 | `VOX_TRANSCRIPT_DIR` | unset | Directory (e.g. an Obsidian folder) for a per-day markdown record of everything you dictate (`YYYY-MM-DD vox.md`, one `- **HH:MM** text` bullet per dictation). Unset = off |
-| `VOX_LLM` | `off` | Optional LLM cleanup pass. Set to `anthropic` to polish transcripts with Claude (needs `ANTHROPIC_API_KEY`) |
-| `VOX_LLM_MODEL` | `claude-haiku-4-5` | Model for the cleanup pass (fast Haiku by default) |
+| `VOX_LLM` | `off` | Optional LLM cleanup pass. `local` = a local OpenAI-compatible server (Ollama; offline, no API key — **recommended**); `anthropic` = Claude via API (needs `ANTHROPIC_API_KEY`) |
+| `VOX_LLM_MODEL` | `llama3.2:3b` (local) / `claude-haiku-4-5` (anthropic) | Model for the cleanup pass |
+| `VOX_LLM_URL` | `http://localhost:11434/v1` | Local server's OpenAI-compatible base URL (Ollama default; works with LM Studio, llama.cpp `--api`, etc.) |
+| `VOX_LLM_KEEPALIVE` | `30m` | Keep the local model resident between dictations so there's no reload latency (Ollama) |
 
 Example — force the tiny model on CPU:
 
@@ -135,14 +137,28 @@ $env:VOX_MODEL="tiny"; $env:VOX_DEVICE="cpu"; .\run-windows.ps1
 
 ### Optional: LLM cleanup (Wispr-style polish)
 
-By default Vox types the raw (offline) transcript. For Wispr-Flow-style polish — grammar, punctuation, removed filler, and spoken commands like "new paragraph" / "scratch that" — enable an LLM pass:
+By default Vox types the raw (offline) transcript. For Wispr-Flow-style polish — grammar, punctuation, removed filler, and spoken commands like "new paragraph" / "scratch that" — enable an LLM pass. Two backends:
+
+**Local (recommended — fully offline, no API key, low latency).** Runs against a local [Ollama](https://ollama.com) server on your own GPU:
 
 ```powershell
-setx ANTHROPIC_API_KEY sk-ant-...   # your Anthropic API key
+winget install Ollama.Ollama    # once
+ollama pull llama3.2:3b         # a small, fast instruct model
+setx VOX_LLM local
+```
+
+Restart Vox. It POSTs the raw transcript to the local OpenAI-compatible endpoint (`VOX_LLM_URL`, default Ollama at `localhost:11434/v1`) using only the Python standard library — no extra package to install. The model stays resident (`VOX_LLM_KEEPALIVE`) so there's no per-dictation reload. Point `VOX_LLM_URL` at LM Studio or `llama.cpp --api` instead if you prefer. Pick a bigger model (`VOX_LLM_MODEL=llama3.1:8b`) for more polish at some latency cost.
+
+**Anthropic (cloud).** Highest quality, needs a key and internet:
+
+```powershell
+setx ANTHROPIC_API_KEY sk-ant-...
 setx VOX_LLM anthropic
 ```
 
-Restart Vox. It runs the raw transcript through Claude (fast **Haiku** by default; set `VOX_LLM_MODEL` to change) before typing, via the official `anthropic` SDK (`pip install anthropic`). It's **fully fail-safe**: no key, no internet, a timeout, or any error falls back to the raw transcript, so a dictation is never lost — offline (e.g. on a plane) it silently skips the pass. Your personal `dictionary.json` corrections still run last, so brand terms like Rokid always survive.
+This uses the official `anthropic` SDK (`pip install anthropic`), fast **Haiku** by default.
+
+Either backend is **fully fail-safe**: no server/key, no internet, a timeout, or any error falls back to the raw transcript, so a dictation is never lost. Your personal `dictionary.json` corrections still run last, so brand terms like Rokid always survive.
 
 ### Model size guide
 
