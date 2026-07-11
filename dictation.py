@@ -28,6 +28,7 @@ import re
 import sys
 import threading
 import time
+import wave
 
 import numpy as np
 import sounddevice as sd
@@ -93,6 +94,16 @@ BEAM_SIZE = int(os.environ.get("VOX_BEAM", "5"))
 # best-effort: a failure is logged and never blocks the paste.
 TRANSCRIPT_DIR = os.environ.get("VOX_TRANSCRIPT_DIR", "")
 
+# Diagnostic audio retention: keep the raw audio of recent dictations as WAV
+# files so a bad transcription can be replayed and re-transcribed after the
+# fact - the transcript alone can't distinguish "Whisper mis-decoded the tail"
+# from "the microphone never delivered the speech" (e.g. another app grabbed
+# the device); the WAV answers that decisively. Default keeps the last 20
+# under %LOCALAPPDATA%\vox\audio (Linux: ~/.local/state/vox/audio).
+# VOX_SAVE_AUDIO=0 disables; VOX_SAVE_AUDIO=<dir> overrides the location.
+SAVE_AUDIO = os.environ.get("VOX_SAVE_AUDIO", "1")
+AUDIO_KEEP = int(os.environ.get("VOX_AUDIO_KEEP", "20"))
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DICT_PATH = os.environ.get(
     "VOX_DICT", os.path.join(SCRIPT_DIR, "dictionary.json")
@@ -151,12 +162,73 @@ def _make_logger():
 _LOGGER = _make_logger()
 
 
+def _state_dir():
+    """Per-user state directory (same base the diagnostic log uses)."""
+    if IS_WINDOWS:
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    else:
+        base = os.environ.get(
+            "XDG_STATE_HOME"
+        ) or os.path.expanduser("~/.local/state")
+    return os.path.join(base, "vox")
+
+
 def log(msg):
     """Print to the console (visible when run via python) and the log file
     (the only record under pythonw, which has no stdout)."""
     print(msg, flush=True)
     if _LOGGER is not None:
         _LOGGER.info(msg)
+
+
+def level_profile(audio, win_sec=5):
+    """RMS level (dBFS) of each win_sec window, e.g. '-33 -31 -29 -78'.
+
+    Makes a dead or hijacked microphone visible in the log without listening
+    to anything: speech sits around -35..-15, a run of values below about -60
+    where speech should be means the device delivered silence.
+    """
+    n = max(1, int(SAMPLE_RATE * win_sec))
+    out = []
+    for i in range(0, len(audio), n):
+        chunk = audio[i:i + n].astype(np.float64)
+        rms = float(np.sqrt(np.mean(chunk * chunk)))
+        out.append(f"{20 * np.log10(rms):.0f}" if rms > 1e-9 else "-inf")
+    return " ".join(out)
+
+
+def save_debug_audio(audio):
+    """Keep the raw audio of recent dictations for after-the-fact diagnosis.
+
+    Best-effort and rotating (newest AUDIO_KEEP kept): a failure is logged and
+    never blocks transcription. Returns the saved path or None.
+    """
+    if SAVE_AUDIO.strip().lower() in ("0", "false", "off", "no", ""):
+        return None
+    try:
+        dest = SAVE_AUDIO if SAVE_AUDIO != "1" else os.path.join(
+            _state_dir(), "audio"
+        )
+        os.makedirs(dest, exist_ok=True)
+        path = os.path.join(
+            dest, time.strftime("rec-%Y%m%d-%H%M%S.wav")
+        )
+        pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
+        with wave.open(path, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(SAMPLE_RATE)
+            w.writeframes(pcm.tobytes())
+        stale = sorted(
+            f for f in os.listdir(dest)
+            if f.startswith("rec-") and f.endswith(".wav")
+        )[:-AUDIO_KEEP]
+        for f in stale:
+            os.remove(os.path.join(dest, f))
+        return path
+    except Exception as e:
+        log(f">> WARNING: could not save debug audio: {e}")
+        return None
 
 
 def _add_cuda_dll_dirs():
@@ -315,7 +387,7 @@ def strip_trailing_hotword_run(text, quiet=False):
     return text
 
 
-def strip_trailing_phantoms(text):
+def strip_trailing_phantoms(text, quiet=False):
     """Remove a hallucinated trailing run of hotwords/proper nouns.
 
     When you stop talking, Whisper can regurgitate the words it was primed with
@@ -347,9 +419,17 @@ def strip_trailing_phantoms(text):
         elif not _NAMELIKE_RE.match(tok):
             return text  # a normal lowercase word -> this is real speech, keep it
     if has_hotword:
-        log(f">> Stripped trailing phantoms: {tail!r}")
+        if not quiet:
+            log(f">> Stripped trailing phantoms: {tail!r}")
         return head
     return text
+
+
+def strip_phantoms(text, quiet=False):
+    """Apply both echo strippers (verbatim run, then trailing phantoms)."""
+    return strip_trailing_phantoms(
+        strip_trailing_hotword_run(text, quiet=quiet), quiet=quiet
+    )
 
 
 def clean_text(text):
@@ -576,7 +656,13 @@ def start_recording():
     )
     stream.start()
     recording = True
-    log(">> RECORDING - speak now...")
+    # Name the device each recording actually opened: if Windows switched the
+    # default input (e.g. a Bluetooth headset connected), it shows up here.
+    try:
+        mic = sd.query_devices(sd.default.device[0])["name"]
+    except Exception:
+        mic = "unknown"
+    log(f">> RECORDING - speak now... (mic: {mic})")
 
 
 def transcribe_audio(audio, with_hotwords=True):
@@ -626,6 +712,10 @@ def stop_and_transcribe():
     log(f">> Transcribing {duration:.1f}s of audio ({len(frames)} blocks"
         + (f", {overflow_count} overflow flags" if overflow_count else "")
         + ")...")
+    log(f">> Levels (dBFS per 5s): {level_profile(audio)}")
+    saved = save_debug_audio(audio)
+    if saved:
+        log(f">> Audio kept: {saved}")
 
     text = transcribe_audio(audio)
     log(f">> Raw: {text}")
@@ -633,16 +723,22 @@ def stop_and_transcribe():
     # Hotword-prompt echo can REPLACE speech, not just trail it: past ~30s of
     # speech Whisper decodes in multiple windows, and a window whose decode
     # derails into the echo consumes its whole span of audio - the last
-    # sentence or two come back as hotword junk. When the echo guard trips,
-    # retranscribe once WITHOUT hotword priming (the echo text is no longer in
-    # the prompt, so the tail decodes normally) and keep whichever result
-    # preserved more real speech. Dictionary corrections still run either way.
+    # sentence or two come back as hotword junk. Stripping the junk leaves the
+    # text CLEAN but silently TRUNCATED, so detection alone isn't enough. When
+    # either echo guard would strip something, retranscribe once WITHOUT hotword
+    # priming (the echo text is no longer in the prompt, so the tail decodes as
+    # real speech) and keep whichever result preserved more speech. Measured on
+    # the length AFTER stripping, so we compare real content, not echo noise.
+    # Dictionary corrections still run on the winner via post_process.
     cleaned = clean_text(text)
-    stripped = strip_trailing_hotword_run(cleaned, quiet=True)
+    stripped = strip_phantoms(cleaned, quiet=True)
     if stripped != cleaned:
         retry = transcribe_audio(audio, with_hotwords=False)
-        log(f">> Echo retry (no hotwords): {retry}")
-        if len(strip_trailing_hotword_run(clean_text(retry), quiet=True)) > len(stripped):
+        retry_stripped = strip_phantoms(clean_text(retry), quiet=True)
+        log(f">> Echo detected; retried without hotwords "
+            f"({len(stripped)} -> {len(retry_stripped)} chars of real speech)")
+        if len(retry_stripped) > len(stripped):
+            log(">> Recovered lost speech via no-hotword retry")
             text = retry
 
     text = post_process(text)
