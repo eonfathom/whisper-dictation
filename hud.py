@@ -93,9 +93,9 @@ _FPS_MS = 33          # ~30 fps poll/redraw
 # after the paste, then auto-clears. NOT the latency itself - just the linger.
 # VOX_HUD_DONE_SECS=0 clears it immediately (no result flash).
 try:
-    _DONE_SECS = max(0.0, float(os.environ.get("VOX_HUD_DONE_SECS", "0.9")))
+    _DONE_SECS = max(0.0, float(os.environ.get("VOX_HUD_DONE_SECS", "0.5")))
 except ValueError:
-    _DONE_SECS = 0.9
+    _DONE_SECS = 0.5
 # The window is a generous transparent canvas (click-through, so the empty
 # space costs nothing) with the caret mapped to a fixed interior point; both
 # the plus and the timer are then drawn at their own caret-relative offsets.
