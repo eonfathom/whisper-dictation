@@ -19,6 +19,7 @@ Requires: faster-whisper, sounddevice, numpy
   Windows: pynput, pyperclip
 """
 
+import ctypes
 import inspect
 import json
 import logging
@@ -96,8 +97,8 @@ HOTKEY_LABEL = "+".join(m.capitalize() for m in HOTKEY_MODS)
 # tail after release so the last word isn't clipped, and pad the buffer with a
 # little silence so Whisper reliably finalizes the final segment. Keep the pad
 # small - a long silent tail invites Whisper to hallucinate the primed hotwords.
-RELEASE_TAIL_SEC = float(os.environ.get("VOX_RELEASE_TAIL", "0.2"))
-TRAILING_PAD_SEC = float(os.environ.get("VOX_PAD", "0.15"))
+RELEASE_TAIL_SEC = float(os.environ.get("VOX_RELEASE_TAIL", "0.12"))
+TRAILING_PAD_SEC = float(os.environ.get("VOX_PAD", "0.1"))
 
 # Strip a hallucinated trailing run of hotwords/proper nouns that Whisper can
 # regurgitate over the silent tail after you stop speaking. On by default;
@@ -322,11 +323,13 @@ def detect_device():
 DEVICE, COMPUTE_TYPE = detect_device()
 
 # Model default is device-aware, so one zero-config setup works everywhere:
-# large-v3 on a CUDA GPU (best accuracy, and the GPU keeps it real-time), but
-# base on a CPU-only machine (large-v3 is far too slow on CPU for live
-# dictation). Override anytime with VOX_MODEL.
+# large-v3-turbo on a CUDA GPU - ~2x faster than large-v3 with effectively
+# identical English accuracy (it drops decoder layers that mostly matter for
+# other languages), which is the biggest single lever on paste latency; base on
+# a CPU-only machine (large models are far too slow on CPU). Override with
+# VOX_MODEL (e.g. large-v3 for max multilingual accuracy).
 MODEL_SIZE = os.environ.get("VOX_MODEL") or (
-    "large-v3" if DEVICE == "cuda" else "base"
+    "large-v3-turbo" if DEVICE == "cuda" else "base"
 )
 
 
@@ -738,11 +741,11 @@ if IS_WINDOWS:
         if not text.strip():
             return
         pyperclip.copy(text + " ")
-        time.sleep(0.02)  # let the clipboard settle before pasting
+        time.sleep(0.01)  # let the clipboard settle before pasting
         with _kbd_controller.pressed(PKey.ctrl):
             _kbd_controller.press("v")
             _kbd_controller.release("v")
-        time.sleep(0.05)  # let the target app consume the paste first
+        time.sleep(0.03)  # let the target app consume the paste first
         pyperclip.copy(text)  # leave the clean transcription on the clipboard
 
 else:
@@ -972,11 +975,29 @@ if IS_WINDOWS:
         k: tok for tok, keys in _WIN_TOKENS.items() for k in keys
     }
 
+    # Virtual-key codes for reading the ACTUAL key state (GetAsyncKeyState).
+    # Tracking press/release events alone is unreliable: the Windows key opens
+    # the Start menu, which often swallows its key-UP event, leaving "win"
+    # phantom-held. That both fires Vox on the wrong chord (Ctrl+Alt reads as
+    # Ctrl+Win) and can stop a recording mid-sentence. So an event only wakes us
+    # up - the real decision reads live hardware state, which can't get stuck.
+    _VK = {"ctrl": (0x11,), "alt": (0x12,), "shift": (0x10,),
+           "win": (0x5B, 0x5C)}
+
     def _token(key):
         return _WIN_KEY_TO_TOKEN.get(key)
 
+    def _mod_down(tok):
+        gaks = ctypes.windll.user32.GetAsyncKeyState
+        return any(gaks(vk) & 0x8000 for vk in _VK[tok])
+
     def _combo_held():
-        return all(m in _held for m in HOTKEY_MODS)
+        # Authoritative: every required modifier is physically down right now,
+        # from the OS - not from our event-tracked set.
+        try:
+            return all(_mod_down(m) for m in HOTKEY_MODS)
+        except Exception:
+            return all(m in _held for m in HOTKEY_MODS)  # fallback
 
     def monitor_keys():
         """Monitor keyboard globally via pynput (works in any window)."""
@@ -992,6 +1013,20 @@ if IS_WINDOWS:
                 _held.discard(tok)
                 _set_recording(_combo_held())
 
+        def _watchdog():
+            # Safety net for a swallowed key-UP (classic with the Windows key /
+            # Start menu): if the chord is no longer physically held, stop -
+            # even if we never got the release event. Reading live key state, so
+            # it can't false-stop while ctrl+win are genuinely down.
+            while True:
+                time.sleep(0.12)
+                try:
+                    if recording and not _combo_held():
+                        _set_recording(False)
+                except Exception:
+                    pass
+
+        threading.Thread(target=_watchdog, daemon=True).start()
         with pynput_keyboard.Listener(
             on_press=on_press, on_release=on_release
         ) as listener:
