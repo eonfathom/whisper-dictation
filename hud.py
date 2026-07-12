@@ -53,9 +53,9 @@ try:
 except ValueError:
     PLUS_SIZE = 9
 try:
-    PLUS_THICK = int(os.environ.get("VOX_HUD_PLUS_THICK", "2"))  # line thickness, px
+    PLUS_THICK = int(os.environ.get("VOX_HUD_PLUS_THICK", "3"))  # line thickness, px
 except ValueError:
-    PLUS_THICK = 2
+    PLUS_THICK = 3
 
 
 def _int_env(name, default):
@@ -77,13 +77,13 @@ CARET_DY = _int_env("VOX_HUD_DY", 0)
 def _opacity():
     """Whole-overlay opacity, 0.05..1.0 (VOX_HUD_OPACITY, default 1.0).
 
-    Applied as a layered-window alpha over everything drawn. The thin 8px light
-    text is already subtle; lower this if you want it fainter. Clamped so a typo
-    can't make it invisible or fully opaque-and-heavy."""
+    Applied as a layered-window alpha over everything drawn. The thin light text
+    is already subtle; lower this if you want it fainter. Clamped so a typo can't
+    make it invisible or fully opaque-and-heavy."""
     try:
-        return max(0.05, min(1.0, float(os.environ.get("VOX_HUD_OPACITY", "1.0"))))
+        return max(0.05, min(1.0, float(os.environ.get("VOX_HUD_OPACITY", "0.9"))))
     except ValueError:
-        return 1.0
+        return 0.9
 
 # The transparent-color key: every pixel painted this exact color becomes a
 # hole in the window. Chosen to be a color no HUD element ever uses.
