@@ -742,6 +742,18 @@ if IS_WINDOWS:
             return
         pyperclip.copy(text + " ")
         time.sleep(0.01)  # let the clipboard settle before pasting
+        # Wait for the chord's OTHER modifiers to be physically released before
+        # injecting Ctrl+V. Recording stops the moment ONE chord key lifts, so
+        # the Win key is often still down here - and Ctrl+Win+V opens the
+        # Windows clipboard-history panel instead of pasting (the "text just
+        # sits on the clipboard" failure). Physical Ctrl still down is fine
+        # (it IS Ctrl+V); Win/Alt/Shift are not.
+        gaks = ctypes.windll.user32.GetAsyncKeyState
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and any(
+            gaks(vk) & 0x8000 for vk in (0x5B, 0x5C, 0x12, 0x10)  # win,win,alt,shift
+        ):
+            time.sleep(0.015)
         with _kbd_controller.pressed(PKey.ctrl):
             _kbd_controller.press("v")
             _kbd_controller.release("v")

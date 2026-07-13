@@ -28,6 +28,23 @@ import time
 
 IS_WINDOWS = os.name == "nt"
 
+# Make the whole process per-monitor-DPI-aware BEFORE any window exists.
+# Without this, Windows DPI-virtualizes tkinter's coordinates while the caret
+# and cursor positions arrive in (differently scaled) physical pixels - on a
+# mixed-DPI multi-monitor setup the crosshair lands visibly off target, and by
+# a different amount per monitor. Aware = one physical coordinate space
+# everywhere. Drawing sizes are compensated by the DPI scale factor (self._k).
+if IS_WINDOWS:
+    try:
+        # -4 = DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (Win10 1703+)
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(
+            ctypes.c_void_p(-4))
+    except Exception:
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            pass
+
 ENABLED = os.environ.get("VOX_HUD", "1").strip().lower() not in (
     "0", "false", "off", "no",
 )
@@ -101,7 +118,11 @@ except ValueError:
 # the plus and the timer are then drawn at their own caret-relative offsets.
 _W, _H = 320, 80
 _CAX, _CAY = 64, 40   # where the caret maps inside the window
-_OFFSET = (18, 0)     # extra shift for cursor mode / static fallback
+# No shift in the static fallback: when there's no OS caret (Electron apps -
+# browsers, Obsidian, Claude), the plus should sit ON the mouse cursor, not
+# beside it. Cursor-follow mode keeps a small offset so it clears the pointer.
+_OFFSET = (0, 0)
+_CURSOR_OFFSET = (18, 26)
 
 # Windows extended-style bits for a ghost window.
 _GWL_EXSTYLE = -20
@@ -182,6 +203,11 @@ class Hud:
         self._tokens = None
         self._done_at = 0.0
         self._anchor = (0, 0)      # static fallback position (mouse at rec start)
+        # DPI scale + scaled geometry; real values set in _run once the window
+        # exists. 1.0/base defaults keep direct _draw use (tests, demo) working.
+        self._k = 1.0
+        self._w, self._h = _W, _H
+        self._cax, self._cay = _CAX, _CAY
         # Session generation: each recording() bumps it; busy()/done()/idle()
         # from a superseded session (a slow transcription finishing after the
         # user re-pressed the chord) carry an older gen and are ignored, so a
@@ -257,11 +283,30 @@ class Hud:
             # Whole-window alpha on top of the color-key: keyed pixels stay fully
             # clickable-through holes, everything drawn dims to a faint ghost.
             root.attributes("-alpha", _opacity())
+            root.withdraw()
+            root.update_idletasks()
+            # DPI scale for this window's monitor: the process is per-monitor
+            # aware (coordinates are physical), so drawing sizes must scale up
+            # by dpi/96 to keep the visual size that was tuned at 96dpi. One
+            # factor, sampled at startup - a monitor-to-monitor DPI change
+            # mid-recording keeps position exact and only mis-sizes slightly.
+            try:
+                hwnd = ctypes.windll.user32.GetParent(
+                    root.winfo_id()) or root.winfo_id()
+                self._k = ctypes.windll.user32.GetDpiForWindow(hwnd) / 96.0
+            except Exception:
+                self._k = 1.0
+            if not (0.5 <= self._k <= 4.0):
+                self._k = 1.0
+            self._w = int(_W * self._k)
+            self._h = int(_H * self._k)
+            self._cax = int(_CAX * self._k)
+            self._cay = int(_CAY * self._k)
             self._canvas = tk.Canvas(
-                root, width=_W, height=_H, bg=_KEY, highlightthickness=0,
+                root, width=self._w, height=self._h, bg=_KEY,
+                highlightthickness=0,
             )
             self._canvas.pack()
-            root.withdraw()
             root.update_idletasks()
             self._ghost(root)
             self._visible = False
@@ -307,30 +352,33 @@ class Hud:
         if ANCHOR == "corner":
             sw = self._root.winfo_screenwidth()
             sh = self._root.winfo_screenheight()
-            x, y = sw - _W - 24, sh - _H - 64
+            x, y = sw - self._w - 24, sh - self._h - 64
         elif ANCHOR == "cursor":
             cx, cy = _cursor_pos()
-            ax, ay = cx + _OFFSET[0], cy + _OFFSET[1]
-            x, y = ax - _CAX, ay - _CAY
+            ax = cx + int(_CURSOR_OFFSET[0] * self._k)
+            ay = cy + int(_CURSOR_OFFSET[1] * self._k)
+            x, y = ax - self._cax, ay - self._cay
         else:  # caret: track the text insertion point, static fallback
             caret = _caret_pos()
             ax, ay = caret if caret else (self._anchor[0] + _OFFSET[0],
                                           self._anchor[1] + _OFFSET[1])
             # Map the caret to the window's interior anchor; the plus and timer
             # are drawn at their own offsets from there.
-            x, y = ax - _CAX, ay - _CAY
+            x, y = ax - self._cax, ay - self._cay
         vl, vt, vw, vh = _virtual_screen()
-        x = max(vl, min(x, vl + vw - _W))
-        y = max(vt, min(y, vt + vh - _H))
-        self._root.geometry(f"{_W}x{_H}+{x}+{y}")
+        x = max(vl, min(x, vl + vw - self._w))
+        y = max(vt, min(y, vt + vh - self._h))
+        self._root.geometry(f"{self._w}x{self._h}+{x}+{y}")
 
     # ---- drawing ------------------------------------------------------------
 
     def _text(self, x, y, s, fill, size=None, anchor="w"):
         """Thin light text: configured font, normal weight, no shadow. Negative
-        tk font size = pixels. Returns the right edge x so runs can be chained."""
+        tk font size = PHYSICAL pixels (scaled by the DPI factor so the visual
+        size matches what was tuned at 96dpi). Returns the right edge x."""
+        px = int((size or SIZE) * self._k)
         item = self._canvas.create_text(
-            x, y, text=s, fill=fill, font=(FONT, -(size or SIZE)), anchor=anchor)
+            x, y, text=s, fill=fill, font=(FONT, -px), anchor=anchor)
         return self._canvas.bbox(item)[2]
 
     def _tabular(self, x, y, s, fill, cell):
@@ -338,38 +386,40 @@ class Hud:
         (1 -> 2) never shifts the string or anything after it, and the number
         gets even spacing. Callers reserve a fixed field width so downstream
         elements never move even when the number gains a digit."""
+        px = int(SIZE * self._k)
         for i, ch in enumerate(s):
             self._canvas.create_text(
                 x + i * cell + cell / 2.0, y, text=ch, fill=fill,
-                font=(FONT, -SIZE), anchor="c")
+                font=(FONT, -px), anchor="c")
 
     def _plus(self):
         """Draw the caret marker at its own offset: a red plus (default), a
         static dot, or nothing. Independent of the timer group."""
-        cx = _CAX + PLUS_DX
-        cy = _CAY + PLUS_DY
+        k = self._k
+        cx = self._cax + PLUS_DX * k
+        cy = self._cay + PLUS_DY * k
         if PLUS:
-            half = PLUS_SIZE / 2.0
-            w = max(1, PLUS_THICK)
+            half = PLUS_SIZE * k / 2.0
+            w = max(1, round(PLUS_THICK * k))
             c = self._canvas
             c.create_line(cx, cy - half, cx, cy + half, fill="#e2504a",
                           width=w, capstyle="projecting")
             c.create_line(cx - half, cy, cx + half, cy, fill="#e2504a",
                           width=w, capstyle="projecting")
         elif SHOW_DOT:
-            r = SIZE * 0.34
+            r = SIZE * k * 0.34
             self._canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
                                      fill="#d1605b", outline="")
 
     def _draw(self, phase):
         c = self._canvas
         c.delete("all")
-        u = float(SIZE)
+        u = float(SIZE) * self._k
         cell = u * 0.66
         self._plus()
         # timer/meter group at its own independent caret-relative offset
-        tx = _CAX + CARET_DX
-        ty = _CAY + CARET_DY
+        tx = self._cax + CARET_DX * self._k
+        ty = self._cay + CARET_DY * self._k
         if phase == "rec":
             # seconds only, tenths, no leading zero / no minutes: 7.4, 92.6, 128.1
             el = max(0.0, time.monotonic() - self.t0)
@@ -387,7 +437,7 @@ class Hud:
                                    ty + u * 0.7 - bh, fill=color, outline="")
             if self.level_db > -100:
                 self._text(mx + 5 * step + u * 0.7, ty, f"{self.level_db:.0f}",
-                           "#8fa3ad", size=max(7, int(u * 0.82)))
+                           "#8fa3ad", size=max(7, int(SIZE * 0.82)))
         elif phase == "busy":
             lat = max(0.0, time.monotonic() - self._busy_t0)
             self._tabular(tx, ty, f"{lat:.1f}", "#e0a83a", cell)
