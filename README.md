@@ -93,10 +93,12 @@ Then, on either platform:
 Vox runs windowless, so use the bundled control script from the repo folder:
 
 ```powershell
-.\vox.ps1 restart   # reload after editing dictionary.json (also: start / stop / status)
+.\vox.ps1 restart   # reload after editing dictionary.json (also: start / stop / status / guard)
 ```
 
 `stop` frees the model's VRAM if you need the GPU for something else; `start` brings it back. If PowerShell blocks it: `powershell -ExecutionPolicy Bypass -File .\vox.ps1 restart`.
+
+**Self-healing:** `.\vox.ps1 guard` runs a guardian loop that starts Vox and restarts it within ~20 s if it ever dies (with crash-storm backoff and duplicate-instance cleanup, logged to `%LOCALAPPDATA%\vox\guardian.log`). Point your Startup shortcut at `powershell -WindowStyle Hidden -ExecutionPolicy Bypass -File vox.ps1 guard` instead of pythonw directly and dictation becomes unkillable across crashes. `stop` stops the guardian too, so a deliberate stop stays stopped.
 
 ## Configuration
 
