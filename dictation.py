@@ -817,11 +817,36 @@ def load_model():
     log("Model loaded.")
 
 
+def _close_stream():
+    """Stop and close the current input stream, swallowing PortAudio errors.
+
+    A stop/close that RAISED used to orphan the stream - and because the
+    recording callback appended to the GLOBAL audio buffer, that orphaned
+    stream then kept filling every later recording. Over a long session the
+    orphans stack up (each adds ~1x real-time), so a few seconds of speech
+    arrives as a multi-minute buffer of overlapping audio that Whisper can't
+    decode - which looked like 'Vox stopped transcribing / got sluggish'."""
+    global stream
+    s, stream = stream, None
+    if s is None:
+        return
+    try:
+        s.stop()
+    except Exception:
+        pass
+    try:
+        s.close()
+    except Exception:
+        pass
+
+
 def start_recording():
     """Start recording audio from the default microphone."""
     global recording, audio_frames, overflow_count, stream, target_window
 
-    audio_frames = []
+    _close_stream()  # never leave a prior stream running (defensive)
+    buf = []
+    audio_frames = buf
     overflow_count = 0
     target_window = get_active_window()
 
@@ -832,7 +857,10 @@ def start_recording():
         global overflow_count
         if status:
             overflow_count += 1
-        audio_frames.append(indata.copy())
+        # Append to the closure-captured list, NOT the global: if this stream is
+        # ever orphaned, it fills its OWN dead list and can never pollute a
+        # later recording's buffer.
+        buf.append(indata.copy())
         # Live level for the HUD meter. One RMS over a ~26ms block is cheap;
         # feed_level never raises, so the capture path stays safe.
         hud.feed_level(float(np.sqrt(np.mean(indata.astype(np.float64) ** 2))))
@@ -886,8 +914,14 @@ def stop_and_transcribe():
     if RELEASE_TAIL_SEC > 0:
         time.sleep(RELEASE_TAIL_SEC)
     if local_stream is not None:
-        local_stream.stop()
-        local_stream.close()
+        try:
+            local_stream.stop()
+        except Exception:
+            pass
+        try:
+            local_stream.close()
+        except Exception:
+            pass
         if stream is local_stream:
             stream = None
     recording = False
