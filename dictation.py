@@ -121,6 +121,29 @@ STRIP_PHANTOMS = os.environ.get("VOX_STRIP_PHANTOMS", "1").lower() not in (
 # standard default; drop to 1 on a slow CPU if latency matters more than accuracy.
 BEAM_SIZE = int(os.environ.get("VOX_BEAM", "5"))
 
+# --- Segment prefetch ----------------------------------------------------------
+# While the hotkey is held, transcribe completed speech segments in the
+# background at natural pauses (a run of near-silence blocks), so release only
+# has to decode the short unfinished tail - release-to-paste latency becomes
+# roughly CONSTANT instead of growing with how long you talked. On by
+# default; VOX_PREFETCH=0 disables it and restores the old "transcribe
+# everything on release" behavior unconditionally - this is also the
+# automatic fallback whenever anything about prefetch goes wrong.
+PREFETCH = os.environ.get("VOX_PREFETCH", "1").lower() not in (
+    "0", "false", "off", "no",
+)
+# Minimum accumulated audio (seconds) since the last cut before a pause is
+# allowed to trigger a new one - guards against chopping a short dictation
+# into pointless slivers (every cut costs a full decode call).
+PREFETCH_MIN_SPEECH = float(os.environ.get("VOX_PREFETCH_MIN_SPEECH", "2.0"))
+# Pause length (seconds) that counts as a natural break between thoughts.
+# Shorter than this is just a breath mid-sentence, not a cut point.
+PREFETCH_SILENCE = float(os.environ.get("VOX_PREFETCH_SILENCE", "0.6"))
+# Block-RMS dBFS at/below which a ~26ms block counts as silence for prefetch
+# purposes. Independent of level_profile's diagnostic thresholds - this one
+# only needs to catch "not currently talking", not classify a dead mic.
+PREFETCH_SILENCE_DB = float(os.environ.get("VOX_PREFETCH_SILENCE_DB", "-42.0"))
+
 # Optional daily transcript record: point VOX_TRANSCRIPT_DIR at a directory
 # (e.g. a folder inside an Obsidian vault) and the final text of every
 # dictation is appended to a per-day markdown file there ("YYYY-MM-DD vox.md",
@@ -750,6 +773,23 @@ lock = threading.Lock()
 target_window = None
 last_llm_tokens = None
 
+# Segment prefetch: serializes every model.transcribe() call (see
+# transcribe_audio) because faster-whisper/ctranslate2 is not meant to be
+# driven from multiple threads at once, and with prefetch there can be up to
+# three callers in flight for one dictation - the background worker, the
+# release path's tail decode, and the echo-retry re-decode.
+_model_lock = threading.Lock()
+# The CURRENT dictation's prefetch session (see _PrefetchSession), or None
+# when prefetch is off/not yet started. Read once at the top of both
+# start_recording() and stop_and_transcribe() so each holds a stable
+# reference for its own dictation regardless of what starts or stops after.
+_prefetch_session = None
+_prefetch_generation = 0
+# Worker poll cadence: how often it checks for a new cut. Small enough that a
+# cut is found soon after the pause that created it (so it's actually done by
+# release), large enough not to burn CPU spinning on RMS math between polls.
+_PREFETCH_POLL_SEC = 0.25
+
 # Floating cursor HUD (timer + mic meter while recording). NullHud when
 # disabled (VOX_HUD=0), non-Windows, or if tkinter fails - call sites are
 # unconditional. Created in main() so a HUD problem can't break import.
@@ -886,15 +926,185 @@ def _close_stream():
         pass
 
 
+class _PrefetchSession:
+    """Per-dictation state for the background segment-prefetch worker.
+
+    Created fresh by every start_recording() call and referenced by both the
+    worker thread and (later) stop_and_transcribe(), so the two sides agree
+    on exactly which recording's audio they're looking at without going back
+    through any other global. `dead` is the single kill switch: start_recording()
+    sets it on the OUTGOING session when a new one begins, and the worker
+    itself sets it on ANY exception - either way, stop_and_transcribe() sees a
+    dead session and falls all the way back to transcribing the whole buffer
+    itself (the pre-prefetch behavior), so a prefetch bug can only ever cost
+    latency, never a dictation.
+    """
+
+    def __init__(self, generation, buf):
+        self.generation = generation
+        self.buf = buf              # same list object start_recording() made `audio_frames`
+        self.rms_db = []            # per-block RMS dBFS computed so far, index-aligned with buf
+        self.block_sec = None       # measured from the first block; None until one has arrived
+        self.last_cut = 0           # block index already prefetched (blocks[:last_cut] is done)
+        self.texts = []             # transcribed text of each committed segment, in order
+        self.dead = False
+        self.stop_flag = threading.Event()
+        self.thread = None
+
+
+def find_prefetch_cut(rms_db, last_cut, block_sec,
+                       min_speech_sec=None, silence_sec=None,
+                       silence_db=None, trailing_guard_sec=0.3):
+    """Pure cut-finding logic, isolated from all I/O so it is trivially unit-testable.
+
+    Given the per-block RMS-dBFS trace of a dictation so far and the block
+    index of the last committed cut, decide whether a NEW cut is now
+    justified: at least `min_speech_sec` of audio since the last cut, followed
+    by a pause of at least `silence_sec` made up of blocks at/below
+    `silence_db`. The cut lands in the MIDDLE of that pause (not at either
+    edge), so neither neighboring segment loses a leading/trailing word if the
+    pause turns out to be a touch shorter than it looked block-by-block.
+
+    `trailing_guard_sec` keeps the last stretch of the buffer off-limits to
+    cutting: while recording is live, the callback may still be actively
+    appending near the tail, and pause detection right at the live edge is
+    less trustworthy than in the middle of the buffer - so a cut is never
+    proposed past `len(rms_db) - guard_blocks`.
+
+    `block_sec` converts the second-based knobs to block counts; it is a
+    parameter (not a global) so this function has zero dependencies beyond
+    its arguments and can be driven directly from synthetic test data.
+
+    Returns the new cut index - i.e. blocks[last_cut:cut] is the newly
+    committed segment - or None if no qualifying pause exists yet.
+    """
+    min_speech_sec = PREFETCH_MIN_SPEECH if min_speech_sec is None else min_speech_sec
+    silence_sec = PREFETCH_SILENCE if silence_sec is None else silence_sec
+    silence_db = PREFETCH_SILENCE_DB if silence_db is None else silence_db
+
+    n = len(rms_db)
+    if n == 0 or block_sec <= 0:
+        return None
+    min_speech_blocks = max(1, round(min_speech_sec / block_sec))
+    silence_blocks_needed = max(1, round(silence_sec / block_sec))
+    guard_blocks = max(0, round(trailing_guard_sec / block_sec))
+    latest_allowed = n - guard_blocks       # cuts must land at or before this index
+    earliest_cut_start = last_cut + min_speech_blocks
+    if latest_allowed <= last_cut:
+        return None
+
+    def qualifying_cut(run_start, run_end):
+        # run_end is exclusive; the candidate silence run is [run_start, run_end).
+        if run_start < earliest_cut_start:
+            return None
+        if run_end - run_start < silence_blocks_needed:
+            return None
+        return run_start + (run_end - run_start) // 2
+
+    run_start = None
+    for i in range(last_cut, latest_allowed):
+        if rms_db[i] <= silence_db:
+            if run_start is None:
+                run_start = i
+        elif run_start is not None:
+            cut = qualifying_cut(run_start, i)
+            if cut is not None:
+                return cut
+            run_start = None
+    if run_start is not None:
+        cut = qualifying_cut(run_start, latest_allowed)
+        if cut is not None:
+            return cut
+    return None
+
+
+def _prefetch_pump(session):
+    """One bookkeeping step: measure any newly-arrived blocks' RMS, check for
+    a qualifying pause, and if one exists, transcribe up to it right away.
+
+    Cheap and idempotent - safe to call on every poll tick even when nothing
+    new has arrived (the for-loop and find_prefetch_cut() are then both
+    no-ops). Runs off the audio callback thread: `session.buf` is only ever
+    APPENDED to, never mutated in place, so reading a length snapshot and
+    slicing up to it is safe even while the callback keeps appending past it.
+    """
+    blocks = session.buf
+    n = len(blocks)
+    if session.block_sec is None:
+        if n == 0:
+            return
+        session.block_sec = len(blocks[0]) / SAMPLE_RATE
+    for i in range(len(session.rms_db), n):
+        blk = blocks[i].astype(np.float64)
+        rms = float(np.sqrt(np.mean(blk * blk)))
+        session.rms_db.append(20 * np.log10(rms) if rms > 1e-9 else -120.0)
+
+    cut = find_prefetch_cut(session.rms_db, session.last_cut, session.block_sec)
+    if cut is None or cut <= session.last_cut:
+        return
+    segment = np.concatenate(blocks[session.last_cut:cut], axis=0).flatten()
+    text = transcribe_audio(segment, with_hotwords=True)
+    if text:
+        # Every segment ends inside a pause - exactly where Whisper echoes its
+        # hotword prompt. Once segments are assembled that junk sits MID-text,
+        # out of reach of the release-time TRAILING strippers, so strip each
+        # segment while any echo is still at its tail.
+        text = strip_phantoms(text, quiet=True)
+    if text:
+        session.texts.append(text)
+    session.last_cut = cut
+
+
+def _prefetch_worker(session):
+    """Background daemon thread: repeatedly pumps `session` until told to
+    stop (stop_flag, set by stop_and_transcribe on release) or superseded by
+    a newer recording (session.dead, set by the next start_recording()).
+
+    ANY exception here - a model error, an unexpected array shape, anything -
+    marks the session dead and logs once, then returns. That is the ENTIRE
+    error-handling story by design: stop_and_transcribe() only trusts a
+    session that isn't dead, so a bug in this thread can only ever cost
+    latency (fall back to the old full-buffer decode on release), never
+    silently drop or corrupt speech.
+    """
+    try:
+        while not session.stop_flag.is_set() and not session.dead:
+            _prefetch_pump(session)
+            session.stop_flag.wait(_PREFETCH_POLL_SEC)
+        if not session.dead:
+            _prefetch_pump(session)  # final catch-up: a pause right at release still counts
+    except Exception as e:
+        session.dead = True
+        log(f">> Prefetch off this dictation ({e.__class__.__name__}: {e})")
+
+
 def start_recording():
     """Start recording audio from the default microphone."""
     global recording, audio_frames, overflow_count, stream, target_window
+    global _prefetch_session, _prefetch_generation
 
     _close_stream()  # never leave a prior stream running (defensive)
     buf = []
     audio_frames = buf
     overflow_count = 0
     target_window = get_active_window()
+
+    # Supersede any still-running prefetch worker from the PREVIOUS dictation
+    # before starting this one's - it should stop touching its (now stale)
+    # buffer immediately rather than keep polling in the background forever.
+    prev_session = _prefetch_session
+    if prev_session is not None:
+        prev_session.dead = True
+        prev_session.stop_flag.set()
+    _prefetch_session = None
+    if PREFETCH and model is not None:
+        _prefetch_generation += 1
+        session = _PrefetchSession(_prefetch_generation, buf)
+        session.thread = threading.Thread(
+            target=_prefetch_worker, args=(session,), daemon=True
+        )
+        _prefetch_session = session
+        session.thread.start()
 
     def callback(indata, frames, time_info, status):
         # Count under/overflow flags instead of printing: printing from the
@@ -930,18 +1140,29 @@ def start_recording():
 
 
 def transcribe_audio(audio, with_hotwords=True):
-    """One Whisper pass over the buffer; returns the raw joined transcript."""
+    """One Whisper pass over the buffer; returns the raw joined transcript.
+
+    Serialized on _model_lock. With segment prefetch there can be up to three
+    callers wanting to decode at once for one dictation - the background
+    prefetch worker, the release path's tail decode, and the echo-retry
+    re-decode - and faster-whisper/ctranslate2 is not safe to drive from
+    multiple threads concurrently. `segments` is a LAZY generator, so the
+    actual decode work happens while iterating it in the join() below - that
+    line must stay inside the lock, not just the .transcribe() call itself,
+    or the decode would run unserialized after the lock was released.
+    """
     kwargs = {}
     if LANGUAGE:
         kwargs["language"] = LANGUAGE
     if with_hotwords and HOTWORDS and supports_hotwords:
         kwargs["hotwords"] = " ".join(HOTWORDS)
-    segments, info = model.transcribe(
-        audio, beam_size=BEAM_SIZE, vad_filter=True,
-        condition_on_previous_text=False,
-        initial_prompt=INITIAL_PROMPT, **kwargs,
-    )
-    return " ".join(seg.text for seg in segments).strip()
+    with _model_lock:
+        segments, info = model.transcribe(
+            audio, beam_size=BEAM_SIZE, vad_filter=True,
+            condition_on_previous_text=False,
+            initial_prompt=INITIAL_PROMPT, **kwargs,
+        )
+        return " ".join(seg.text for seg in segments).strip()
 
 
 def stop_and_transcribe():
@@ -953,6 +1174,11 @@ def stop_and_transcribe():
     hud_gen = hud.session()
     hud.busy(hud_gen)
     last_llm_tokens = None
+    # Capture the prefetch session for THIS dictation right away, mirroring
+    # `local_stream = stream` below - both globals could otherwise be
+    # reassigned out from under us if the next recording starts before this
+    # function gets around to reading them.
+    session = _prefetch_session
     # Grace tail: keep capturing for a beat after release so trailing words
     # aren't clipped by release timing or the final audio block being dropped
     # when the stream stops. The recording callback keeps appending while we wait.
@@ -993,7 +1219,50 @@ def stop_and_transcribe():
     if saved:
         log(f">> Audio kept: {saved}")
 
-    text = transcribe_audio(audio)
+    # Segment prefetch: if this dictation had a live worker, stop it and see
+    # whether it got anywhere. Always stop/join when a session exists - even
+    # if it turns out to have produced nothing - so the worker thread never
+    # leaks past this dictation. `frames` (captured above from the same `buf`
+    # list the worker was reading) lets us slice out exactly the un-prefetched
+    # tail: blocks[:session.last_cut] were already transcribed in the
+    # background, blocks[session.last_cut:] were not.
+    text = None
+    if session is not None:
+        session.stop_flag.set()
+        if session.thread is not None and session.thread.is_alive():
+            session.thread.join(timeout=3.0)
+        if session.thread is not None and session.thread.is_alive():
+            # Worker is stuck (shouldn't happen - _prefetch_pump has no
+            # blocking call besides the model lock). Its `dead`/`last_cut`/
+            # `texts` are no longer safe to read without a race, so ignore
+            # everything it did and fall all the way back below.
+            log(">> Prefetch worker did not stop in time; using full-buffer transcription")
+        elif not session.dead and session.texts:
+            cut = session.last_cut
+            tail_frames = frames[cut:]
+            tail_audio = (
+                np.concatenate(tail_frames, axis=0).flatten()
+                if tail_frames else np.zeros(0, dtype=np.float32)
+            )
+            if TRAILING_PAD_SEC > 0:
+                tail_audio = np.concatenate(
+                    [tail_audio, np.zeros(
+                        int(SAMPLE_RATE * TRAILING_PAD_SEC), dtype=tail_audio.dtype
+                    )]
+                )
+            t0 = time.monotonic()
+            tail_text = transcribe_audio(tail_audio, with_hotwords=True)
+            tail_decode_sec = time.monotonic() - t0
+            pre_done_sec = sum(len(b) for b in frames[:cut]) / SAMPLE_RATE
+            tail_sec = duration - pre_done_sec
+            log(f">> Prefetch: {len(session.texts)} segs, {pre_done_sec:.1f}s "
+                f"pre-done; tail {tail_sec:.1f}s (decoded in {tail_decode_sec:.2f}s)")
+            text = " ".join(t for t in (session.texts + [tail_text]) if t)
+            # else: session.dead (an error, or superseded) or produced no
+            # segments (a short dictation) - fall through to the classic path.
+
+    if text is None:
+        text = transcribe_audio(audio)
     log(f">> Raw: {text}")
 
     # Hotword-prompt echo can REPLACE speech, not just trail it: past ~30s of
