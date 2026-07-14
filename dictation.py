@@ -83,6 +83,16 @@ LLM_KEEPALIVE = os.environ.get("VOX_LLM_KEEPALIVE", "30m")
 # is pre-warmed at startup; 10s covers a cold load or a very long dictation
 # without making a stuck server block the paste for long.
 LLM_TIMEOUT = float(os.environ.get("VOX_LLM_TIMEOUT", "10"))
+# Hard latency budget for the cleanup pass: if the LLM hasn't answered within
+# this many seconds, paste the RAW transcript immediately instead of waiting
+# (the polish is never worth a multi-second stall). The slow case is a model
+# gone cold - Windows pages Ollama's VRAM out after idle and the first request
+# pays ~5s to page back in. The keep-warm heartbeat below makes that rare;
+# this budget caps the damage when it happens anyway.
+LLM_BUDGET = float(os.environ.get("VOX_LLM_BUDGET", "1.5"))
+# Keep-warm ping cadence (seconds; 0 disables). A tiny request every few
+# minutes keeps the model's pages hot so first-after-idle stays ~0.2s.
+LLM_KEEPWARM_SEC = float(os.environ.get("VOX_LLM_KEEPWARM", "240"))
 
 # Push-to-talk chord: hold all these modifiers together to record. Override via
 # VOX_HOTKEY, e.g. "ctrl+alt" or "ctrl+shift". Supported modifiers:
@@ -596,6 +606,17 @@ def warm_llm():
         except Exception as e:
             log(f">> LLM warm-up skipped ({e.__class__.__name__}); "
                 "first dictation will load the model")
+        # Keep-warm heartbeat: without a periodic compute touch, Windows pages
+        # the idle model's VRAM out and the first cleanup after a long gap
+        # stalls ~5s paging it back. A tiny request every few minutes keeps it
+        # hot for negligible cost. Best-effort forever; failures just mean the
+        # next real dictation warms it (and pays once).
+        while LLM_KEEPWARM_SEC > 0:
+            time.sleep(LLM_KEEPWARM_SEC)
+            try:
+                _llm_format_local("ok", _cleanup_system_prompt())
+            except Exception:
+                pass
 
     threading.Thread(target=_warm, daemon=True).start()
 
@@ -644,12 +665,25 @@ def llm_format(text):
     try:
         system = _cleanup_system_prompt()
         if LLM_BACKEND in _LOCAL_BACKENDS:
-            cleaned = _llm_format_local(text, system)
+            backend = _llm_format_local
         elif LLM_BACKEND == "anthropic":
-            cleaned = _llm_format_anthropic(text, system)
+            backend = _llm_format_anthropic
         else:
             log(f">> Unknown VOX_LLM={LLM_BACKEND!r}; using raw text")
             return text
+        # Run the backend on a worker so the paste can't stall past LLM_BUDGET:
+        # a cold/paged-out model takes seconds, and raw-now beats polished-late.
+        # An over-budget worker finishes in the background (result discarded),
+        # which conveniently also re-warms the model for the next dictation.
+        result = []
+        worker = threading.Thread(
+            target=lambda: result.append(backend(text, system)), daemon=True)
+        worker.start()
+        worker.join(LLM_BUDGET)
+        if not result:
+            log(f">> LLM cleanup over budget ({LLM_BUDGET:.1f}s); using raw text")
+            return text
+        cleaned = result[0]
         if cleaned and _looks_like_reply(text, cleaned):
             log(f">> LLM cleanup rejected (reply-like output: {cleaned[:80]!r}); "
                 "using raw text")
