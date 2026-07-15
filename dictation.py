@@ -67,11 +67,15 @@ CHANNELS = 1
 # so there's no reload latency (Ollama-specific, ignored elsewhere).
 LLM_BACKEND = os.environ.get("VOX_LLM", "off").lower()
 _LOCAL_BACKENDS = ("local", "ollama", "openai-compatible")
-# Small but strongly instruction-following: cleans reliably without replying to
-# the transcript, and on an RTX-class GPU runs in ~0.2s. llama3.2:3b was tried
-# and rejected - it chats back ("I apologize... here is the cleaned text").
+# qwen2.5:3b-instruct: benchmarked 2026-07-14 against 1.5b on real dictations -
+# the 1.5b DETERMINISTICALLY fabricated ("rokid glasses" -> "ZenBook", 3/3 runs,
+# invisible to the reply guard as a single-word swap) and flipped pronouns
+# (I -> you); the 3b did neither, resists chat-leak bait, and runs 0.22-0.36s
+# warm - well inside LLM_BUDGET. Its two casing quirks (EON, Rokid Glasses) are
+# normalized by the corrections map, which runs last. llama3.2:3b was tried and
+# rejected earlier - it chats back ("I apologize... here is the cleaned text").
 _DEFAULT_MODEL = (
-    "qwen2.5:1.5b-instruct" if LLM_BACKEND in _LOCAL_BACKENDS else "claude-haiku-4-5"
+    "qwen2.5:3b-instruct" if LLM_BACKEND in _LOCAL_BACKENDS else "claude-haiku-4-5"
 )
 LLM_MODEL = os.environ.get("VOX_LLM_MODEL", _DEFAULT_MODEL)
 # 127.0.0.1, not "localhost": on Windows the hostname resolves to IPv6 ::1 first
