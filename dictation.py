@@ -156,6 +156,15 @@ PREFETCH_SILENCE = float(os.environ.get("VOX_PREFETCH_SILENCE", "1.0"))
 # purposes. Independent of level_profile's diagnostic thresholds - this one
 # only needs to catch "not currently talking", not classify a dead mic.
 PREFETCH_SILENCE_DB = float(os.environ.get("VOX_PREFETCH_SILENCE_DB", "-42.0"))
+# Shadow-compare (testing aid, VOX_PREFETCH_COMPARE=0 to disable): after a
+# prefetch-assembled dictation has ALREADY pasted, re-transcribe the same
+# audio the classic single-pass way in the background and log both versions,
+# the segment boundaries, and a similarity score to prefetch-compare.log -
+# ground truth for judging splicing quality against the old behavior. Costs
+# one extra background decode per prefetched dictation; never delays a paste.
+PREFETCH_COMPARE = os.environ.get("VOX_PREFETCH_COMPARE", "1").lower() not in (
+    "0", "false", "off", "no",
+)
 
 # Optional daily transcript record: point VOX_TRANSCRIPT_DIR at a directory
 # (e.g. a folder inside an Obsidian vault) and the final text of every
@@ -1127,6 +1136,49 @@ def _prefetch_pump(session):
     session.last_cut = cut
 
 
+def _shadow_compare(audio, assembled, segment_texts, tail_text):
+    """Testing aid: decode the full buffer the CLASSIC way and log it next to
+    the prefetch-assembled version, with segment boundaries and a similarity
+    score, to %LOCALAPPDATA%/vox/prefetch-compare.log. Runs on a daemon thread
+    AFTER the paste, so it costs GPU but never latency; any failure is silent
+    (it's diagnostics, not product)."""
+    try:
+        import difflib
+        classic = transcribe_audio(audio, with_hotwords=True)
+        a = assembled.split()
+        b = classic.split()
+        ratio = difflib.SequenceMatcher(None, a, b).ratio()
+        path = os.path.join(_state_dir_win(), "prefetch-compare.log")
+        # crude rotation so the file can't grow without bound
+        try:
+            if os.path.getsize(path) > 2_000_000:
+                os.replace(path, path + ".1")
+        except OSError:
+            pass
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        flag = "" if ratio >= 0.97 else "  <<< DIVERGENCE"
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(
+                f"{stamp} sim={ratio:.3f}{flag}\n"
+                f"  segments : {' | '.join(segment_texts + [tail_text])}\n"
+                f"  assembled: {assembled}\n"
+                f"  classic  : {classic}\n\n"
+            )
+        if ratio < 0.97:
+            log(f">> Prefetch shadow-compare divergence (sim={ratio:.2f}); "
+                "see prefetch-compare.log")
+    except Exception:
+        pass
+
+
+def _state_dir_win():
+    """Same per-user state dir the diagnostic log uses."""
+    base = os.environ.get("LOCALAPPDATA") if IS_WINDOWS else (
+        os.environ.get("XDG_STATE_HOME")
+        or os.path.expanduser("~/.local/state"))
+    return os.path.join(base or os.path.expanduser("~"), "vox")
+
+
 def _prefetch_worker(session):
     """Background daemon thread: repeatedly pumps `session` until told to
     stop (stop_flag, set by stop_and_transcribe on release) or superseded by
@@ -1316,6 +1368,12 @@ def stop_and_transcribe():
             log(f">> Prefetch: {len(session.texts)} segs, {pre_done_sec:.1f}s "
                 f"pre-done; tail {tail_sec:.1f}s (decoded in {tail_decode_sec:.2f}s)")
             text = " ".join(t for t in (session.texts + [tail_text]) if t)
+            if PREFETCH_COMPARE and text:
+                threading.Thread(
+                    target=_shadow_compare,
+                    args=(audio, text, list(session.texts), tail_text),
+                    daemon=True,
+                ).start()
             # else: session.dead (an error, or superseded) or produced no
             # segments (a short dictation) - fall through to the classic path.
 
