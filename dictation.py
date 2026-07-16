@@ -19,6 +19,7 @@ Requires: faster-whisper, sounddevice, numpy
   Windows: pynput, pyperclip
 """
 
+import collections
 import ctypes
 import inspect
 import json
@@ -113,6 +114,12 @@ HOTKEY_LABEL = "+".join(m.capitalize() for m in HOTKEY_MODS)
 # small - a long silent tail invites Whisper to hallucinate the primed hotwords.
 RELEASE_TAIL_SEC = float(os.environ.get("VOX_RELEASE_TAIL", "0.12"))
 TRAILING_PAD_SEC = float(os.environ.get("VOX_PAD", "0.1"))
+# Pre-roll (seconds) prepended to every recording from an always-on ring
+# buffer. The mic stream stays open permanently (audio is DISCARDED unless
+# recording), because opening the device on demand costs ~0.7s cold - words
+# spoken in that window were simply never captured. With a persistent stream
+# plus pre-roll, speech that starts a beat BEFORE the chord lands is kept too.
+PREROLL_SEC = float(os.environ.get("VOX_PREROLL", "0.4"))
 
 # Strip a hallucinated trailing run of hotwords/proper nouns that Whisper can
 # regurgitate over the silent tail after you stop speaking. On by default;
@@ -138,11 +145,13 @@ PREFETCH = os.environ.get("VOX_PREFETCH", "1").lower() not in (
 )
 # Minimum accumulated audio (seconds) since the last cut before a pause is
 # allowed to trigger a new one - guards against chopping a short dictation
-# into pointless slivers (every cut costs a full decode call).
-PREFETCH_MIN_SPEECH = float(os.environ.get("VOX_PREFETCH_MIN_SPEECH", "2.0"))
+# into pointless slivers (every cut costs a full decode call). 4s (raised from
+# 2s) after real-world use showed 0.6s/2s cut sentences apart mid-thought.
+PREFETCH_MIN_SPEECH = float(os.environ.get("VOX_PREFETCH_MIN_SPEECH", "4.0"))
 # Pause length (seconds) that counts as a natural break between thoughts.
-# Shorter than this is just a breath mid-sentence, not a cut point.
-PREFETCH_SILENCE = float(os.environ.get("VOX_PREFETCH_SILENCE", "0.6"))
+# Shorter than this is just a breath mid-sentence, not a cut point. 1.0s
+# (raised from 0.6s): breath-length pauses were fragmenting sentences.
+PREFETCH_SILENCE = float(os.environ.get("VOX_PREFETCH_SILENCE", "1.0"))
 # Block-RMS dBFS at/below which a ~26ms block counts as silence for prefetch
 # purposes. Independent of level_profile's diagnostic thresholds - this one
 # only needs to catch "not currently talking", not classify a dead mic.
@@ -771,6 +780,15 @@ recording = False
 audio_frames = []
 overflow_count = 0
 stream = None
+# Persistent-capture state: the one long-lived input stream's callback always
+# feeds the pre-roll ring; it appends into _active_buf only while a recording
+# is live (None = discard). _mic_name is cached at stream-open so the hot
+# record-start path never queries the device list.
+_active_buf = None
+_preroll = collections.deque(
+    maxlen=max(1, int(PREROLL_SEC * SAMPLE_RATE / 416))
+)
+_mic_name = "unknown"
 model = None
 supports_hotwords = False
 lock = threading.Lock()
@@ -930,6 +948,55 @@ def _close_stream():
         pass
 
 
+def _audio_callback(indata, frames, time_info, status):
+    """The ONE persistent capture callback (module-level, no per-recording
+    closures - so there is exactly one writer and the orphan-pollution class
+    of bug can't come back). Always feeds the pre-roll ring; appends to the
+    live recording buffer only when one is active."""
+    global overflow_count
+    if status:
+        overflow_count += 1
+    blk = indata.copy()
+    _preroll.append(blk)
+    buf = _active_buf
+    if buf is not None:
+        buf.append(blk)
+        # Live level for the HUD meter, only while recording (cheap: one RMS
+        # over a ~26ms block; feed_level never raises).
+        hud.feed_level(float(np.sqrt(np.mean(blk.astype(np.float64) ** 2))))
+
+
+def _ensure_stream():
+    """Make sure the persistent input stream is open and running.
+
+    Opening the device costs ~0.7s cold (WASAPI renegotiation after idle),
+    which used to happen on EVERY chord press - the first words of anyone who
+    starts talking immediately were never captured. Now the stream opens once
+    (at startup) and stays open; this is a fast no-op when healthy and a
+    self-repair when the stream died (device unplug/sleep). Idle cost is just
+    the ring buffer - audio is discarded unless recording."""
+    global stream, _mic_name
+    s = stream
+    if s is not None:
+        try:
+            if s.active:
+                return
+        except Exception:
+            pass
+    _close_stream()
+    stream = sd.InputStream(
+        samplerate=SAMPLE_RATE,
+        channels=CHANNELS,
+        dtype="float32",
+        callback=_audio_callback,
+    )
+    stream.start()
+    try:
+        _mic_name = sd.query_devices(sd.default.device[0])["name"]
+    except Exception:
+        _mic_name = "unknown"
+
+
 class _PrefetchSession:
     """Per-dictation state for the background segment-prefetch worker.
 
@@ -1047,7 +1114,8 @@ def _prefetch_pump(session):
     if cut is None or cut <= session.last_cut:
         return
     segment = np.concatenate(blocks[session.last_cut:cut], axis=0).flatten()
-    text = transcribe_audio(segment, with_hotwords=True)
+    text = transcribe_audio(segment, with_hotwords=True,
+                            prev_text=" ".join(session.texts) or None)
     if text:
         # Every segment ends inside a pause - exactly where Whisper echoes its
         # hotword prompt. Once segments are assembled that junk sits MID-text,
@@ -1083,15 +1151,26 @@ def _prefetch_worker(session):
 
 
 def start_recording():
-    """Start recording audio from the default microphone."""
-    global recording, audio_frames, overflow_count, stream, target_window
+    """Begin a recording against the always-open capture stream.
+
+    The stream is persistent (see _ensure_stream), so 'starting' is just:
+    seed the buffer with the pre-roll ring (words spoken a beat before the
+    chord landed are already in it) and point the callback at it. This makes
+    record-start effectively instant - the old open-a-stream-per-recording
+    design paid ~0.7s of cold WASAPI negotiation, eating the first words."""
+    global recording, audio_frames, overflow_count, target_window, _active_buf
     global _prefetch_session, _prefetch_generation
 
-    _close_stream()  # never leave a prior stream running (defensive)
-    buf = []
-    audio_frames = buf
     overflow_count = 0
     target_window = get_active_window()
+    try:
+        _ensure_stream()  # fast no-op when healthy; self-repair if it died
+    except Exception as e:
+        log(f">> Mic stream failed to open ({e.__class__.__name__}: {e})")
+        return
+    buf = list(_preroll)  # pre-roll: capture starts BEFORE the keypress
+    audio_frames = buf
+    _active_buf = buf     # callback appends from the next block onward
 
     # Supersede any still-running prefetch worker from the PREVIOUS dictation
     # before starting this one's - it should stop touching its (now stale)
@@ -1110,40 +1189,12 @@ def start_recording():
         _prefetch_session = session
         session.thread.start()
 
-    def callback(indata, frames, time_info, status):
-        # Count under/overflow flags instead of printing: printing from the
-        # audio thread can itself glitch capture, and under pythonw stderr is
-        # None so the old message vanished anyway. Reported at stop.
-        global overflow_count
-        if status:
-            overflow_count += 1
-        # Append to the closure-captured list, NOT the global: if this stream is
-        # ever orphaned, it fills its OWN dead list and can never pollute a
-        # later recording's buffer.
-        buf.append(indata.copy())
-        # Live level for the HUD meter. One RMS over a ~26ms block is cheap;
-        # feed_level never raises, so the capture path stays safe.
-        hud.feed_level(float(np.sqrt(np.mean(indata.astype(np.float64) ** 2))))
-
-    stream = sd.InputStream(
-        samplerate=SAMPLE_RATE,
-        channels=CHANNELS,
-        dtype="float32",
-        callback=callback,
-    )
-    stream.start()
     recording = True
-    # Name the device each recording actually opened: if Windows switched the
-    # default input (e.g. a Bluetooth headset connected), it shows up here.
-    try:
-        mic = sd.query_devices(sd.default.device[0])["name"]
-    except Exception:
-        mic = "unknown"
     hud.recording()
-    log(f">> RECORDING - speak now... (mic: {mic})")
+    log(f">> RECORDING - speak now... (mic: {_mic_name})")
 
 
-def transcribe_audio(audio, with_hotwords=True):
+def transcribe_audio(audio, with_hotwords=True, prev_text=None):
     """One Whisper pass over the buffer; returns the raw joined transcript.
 
     Serialized on _model_lock. With segment prefetch there can be up to three
@@ -1160,18 +1211,28 @@ def transcribe_audio(audio, with_hotwords=True):
         kwargs["language"] = LANGUAGE
     if with_hotwords and HOTWORDS and supports_hotwords:
         kwargs["hotwords"] = " ".join(HOTWORDS)
+    # Context chaining: when this decode continues an earlier one (prefetch
+    # segments, and the release tail after prefetched segments), prime Whisper
+    # with the trailing words of what came before instead of the generic
+    # punctuation primer. Without it each segment decodes blind and the
+    # boundaries fragment ("...I also have Fathom. History somewhere..." for
+    # "Fathom history"). ~30 words keeps well inside the 224-token prompt cap.
+    if prev_text:
+        prompt = " ".join(prev_text.split()[-30:])
+    else:
+        prompt = INITIAL_PROMPT
     with _model_lock:
         segments, info = model.transcribe(
             audio, beam_size=BEAM_SIZE, vad_filter=True,
             condition_on_previous_text=False,
-            initial_prompt=INITIAL_PROMPT, **kwargs,
+            initial_prompt=prompt, **kwargs,
         )
         return " ".join(seg.text for seg in segments).strip()
 
 
 def stop_and_transcribe():
     """Stop recording, transcribe, and type the result."""
-    global recording, stream, last_llm_tokens
+    global recording, last_llm_tokens
 
     # Tag every HUD update with this dictation's session, so a slow transcription
     # finishing after the user re-pressed the chord can't stomp the new recording.
@@ -1184,22 +1245,13 @@ def stop_and_transcribe():
     # function gets around to reading them.
     session = _prefetch_session
     # Grace tail: keep capturing for a beat after release so trailing words
-    # aren't clipped by release timing or the final audio block being dropped
-    # when the stream stops. The recording callback keeps appending while we wait.
-    local_stream = stream
+    # aren't clipped by release timing. The callback keeps appending while we
+    # wait; then we simply detach the buffer - the persistent stream itself
+    # stays open (closing it is what cost ~0.7s to reopen on the next press).
+    global _active_buf
     if RELEASE_TAIL_SEC > 0:
         time.sleep(RELEASE_TAIL_SEC)
-    if local_stream is not None:
-        try:
-            local_stream.stop()
-        except Exception:
-            pass
-        try:
-            local_stream.close()
-        except Exception:
-            pass
-        if stream is local_stream:
-            stream = None
+    _active_buf = None
     recording = False
 
     frames = list(audio_frames)
@@ -1255,7 +1307,9 @@ def stop_and_transcribe():
                     )]
                 )
             t0 = time.monotonic()
-            tail_text = transcribe_audio(tail_audio, with_hotwords=True)
+            tail_text = transcribe_audio(
+                tail_audio, with_hotwords=True,
+                prev_text=" ".join(session.texts) or None)
             tail_decode_sec = time.monotonic() - t0
             pre_done_sec = sum(len(b) for b in frames[:cut]) / SAMPLE_RATE
             tail_sec = duration - pre_done_sec
@@ -1438,6 +1492,11 @@ def main():
     load_model()
     warm_llm()  # background pre-load of the local cleanup model (no-op if off)
     hud = _hud_mod.create(log)  # floating cursor HUD (NullHud when disabled)
+    try:
+        _ensure_stream()  # open the persistent mic stream once, ahead of use
+        log(f"  Mic: {_mic_name} (persistent stream, {PREROLL_SEC:.1f}s pre-roll)")
+    except Exception as e:
+        log(f"  Mic: deferred ({e.__class__.__name__}: {e}); will open on first use")
 
     print("", flush=True)
     log("=== Vox ready ===")
