@@ -98,6 +98,14 @@ LLM_BUDGET = float(os.environ.get("VOX_LLM_BUDGET", "1.5"))
 # Keep-warm ping cadence (seconds; 0 disables). A tiny request every few
 # minutes keeps the model's pages hot so first-after-idle stays ~0.2s.
 LLM_KEEPWARM_SEC = float(os.environ.get("VOX_LLM_KEEPWARM", "240"))
+# Deletion guard for the cleanup pass: reject the LLM's output when more than
+# this fraction of the transcript's content words (fillers and spoken-command
+# words excluded) is simply GONE from the result. _looks_like_reply catches
+# ADDED vocabulary (a chat-leak); this catches the small-model failure mode it
+# can't see - paraphrasing away or silently dropping whole clauses (observed
+# with qwen2.5:3b, e.g. rewriting a 4-sentence dictation down to 2). A false
+# positive only costs the polish: the raw transcript is pasted. 0 disables.
+LLM_DROP_MAX = float(os.environ.get("VOX_LLM_DROP_MAX", "0.15"))
 
 # Push-to-talk chord: hold all these modifiers together to record. Override via
 # VOX_HOTKEY, e.g. "ctrl+alt" or "ctrl+shift". Supported modifiers:
@@ -694,6 +702,46 @@ def _looks_like_reply(raw, cleaned):
     return novel >= 2 and novel / len(out_words) > 0.5
 
 
+# Tokens the cleanup pass legitimately removes (fillers, hedges) or transforms
+# into formatting (spoken commands), so their disappearance is not evidence of
+# a bad rewrite. Everything else the speaker said is expected to survive.
+_GUARD_DROPPABLE = {
+    "um", "uh", "uhm", "erm", "er", "ah", "hmm", "mm", "mhm", "huh", "oh",
+    "okay", "ok", "like", "well", "so", "yeah", "actually", "basically",
+    "literally", "anyway", "alright", "right",
+    "you", "know", "i", "mean", "guess",
+    "new", "paragraph", "line", "period", "comma",
+}
+
+
+def _dropped_too_much(raw, cleaned):
+    """True when the LLM deleted a meaningful chunk of the speech.
+
+    The mirror image of _looks_like_reply: that one fires on words the LLM
+    ADDED, this one on words it LOST. A faithful cleanup deletes almost
+    nothing beyond fillers, so the missing-content fraction of an honest pass
+    sits near zero, while a paraphrasing rewrite sheds distinctive vocabulary
+    wholesale. Measured on set membership (curly apostrophes normalized so
+    "don't"/"don't" match), against content words only - fillers and command
+    words are the LLM's to drop. "scratch that" skips the guard entirely:
+    deleting a run of speech is then exactly what was asked for.
+    """
+    if LLM_DROP_MAX <= 0:
+        return False
+    if "scratch that" in raw.lower():
+        return False
+
+    def words(s):
+        return _WORD_RE.findall(s.replace("’", "'").lower())
+
+    content = [w for w in words(raw) if w not in _GUARD_DROPPABLE]
+    if len(content) < 8:
+        return False  # too few words for a fraction to mean anything
+    kept = set(words(cleaned))
+    missing = sum(1 for w in content if w not in kept)
+    return missing / len(content) > LLM_DROP_MAX
+
+
 def llm_format(text):
     """Optional Wispr-style cleanup: polish the raw transcript with an LLM.
 
@@ -732,6 +780,10 @@ def llm_format(text):
         if cleaned and _looks_like_reply(text, cleaned):
             log(f">> LLM cleanup rejected (reply-like output: {cleaned[:80]!r}); "
                 "using raw text")
+            return text
+        if cleaned and _dropped_too_much(text, cleaned):
+            log(f">> LLM cleanup rejected (dropped too much speech: "
+                f"{cleaned[:80]!r}); using raw text")
             return text
         log(f">> LLM cleanup ({LLM_BACKEND}) in {time.monotonic() - t0:.2f}s")
         return cleaned or text
@@ -1098,6 +1150,86 @@ def find_prefetch_cut(rms_db, last_cut, block_sec,
     return None
 
 
+# --- Segment join repair --------------------------------------------------------
+# Whisper "finalizes" every independently decoded chunk: terminal punctuation
+# at the end, a capital letter at the start - even when the chunk stopped at a
+# mid-sentence pause. Naive space-joining of prefetch segments therefore turns
+# pauses into hard sentence boundaries ("...the Halcyon Loans? and whether..."),
+# which shadow-compare showed on 35 of the first 38 prefetched dictations.
+# The two artifacts are mechanically detectable from the text alone, and the
+# rules below undo exactly those; a boundary where both sides genuinely look
+# like a sentence break (terminal punctuation AND a capitalized non-function
+# word) is left alone - that ambiguity needs audio, not heuristics.
+
+# Words that are essentially never sentence-initial proper nouns, so they are
+# safe to lowercase when they start a segment whose predecessor is clearly
+# mid-sentence. A whitelist rather than "lowercase anything", so a real name
+# after a pause ("Call it | Gretchen Taylor...") keeps its capital - and
+# hotwords/names are protected automatically by not being on the list.
+_JOIN_FUNCTION_WORDS = {
+    "a", "an", "the",
+    "and", "but", "or", "nor", "so", "yet",
+    "because", "although", "though", "while", "whereas", "unless", "until",
+    "if", "since", "before", "after", "when", "whenever", "where", "which",
+    "that", "than", "then", "as",
+    "at", "by", "for", "from", "in", "into", "of", "on", "onto", "to",
+    "with", "without", "about", "against", "between", "during", "over",
+    "under", "through", "toward", "towards", "upon",
+    "it", "its", "he", "his", "she", "her", "they", "them", "their", "we",
+    "us", "our", "you", "your", "this", "these", "those", "there", "here",
+    "is", "are", "was", "were", "be", "been", "being", "am",
+    "do", "does", "did", "done",
+    "have", "has", "had", "having",
+    "will", "would", "can", "could", "should", "shall", "may", "might",
+    "must", "not", "also", "just", "still", "even", "only", "again", "too",
+    "very", "some", "any", "all", "both", "each", "every", "no",
+    "what", "how", "why", "who", "whom", "whose",
+    "plus", "like", "kind", "sort", "maybe", "basically", "actually",
+}
+
+# 3+ dots or the one-char ellipsis - NOT a lone '.', which is a real sentence end.
+_TRAIL_ELLIPSIS_RE = re.compile(r"(?:\.{3,}|…+)\s*$")
+_TRAIL_TERMINAL_RE = re.compile(r"[.!?]+$")
+_LEAD_WORD_RE = re.compile(r"[A-Za-z][\w'’\-]*")
+
+
+def repair_segment_joins(texts):
+    """Join prefetch segments, undoing Whisper's per-chunk finalization.
+
+    Pure text-in/text-out (like find_prefetch_cut) so it is trivially
+    unit-testable against real divergence cases from prefetch-compare.log.
+    Per boundary, in order:
+
+      1. A trailing ellipsis on the left side is Whisper marking "trailed
+         off mid-thought" at the cut - drop it, the thought continues in the
+         next segment ("Include things that... | Gretchen said" ->
+         "Include things that Gretchen said").
+      2. Right side starts lowercase -> it is a continuation (Whisper
+         capitalizes genuine sentence starts), so any terminal punctuation
+         on the left was false finalization - strip it ("...Halcyon Loans?
+         | and whether..." -> "...Halcyon Loans and whether...").
+      3. Left side ends mid-sentence (no terminal punctuation) but the right
+         starts with a capital -> the capital is chunk-start artifact; undo
+         it only for whitelisted function words, never for potential names.
+    """
+    parts = [t.strip() for t in texts if t and t.strip()]
+    if not parts:
+        return ""
+    out = parts[0]
+    for seg in parts[1:]:
+        if _TRAIL_ELLIPSIS_RE.search(out):
+            out = _TRAIL_ELLIPSIS_RE.sub("", out).rstrip()
+        if seg[:1].islower():
+            out = _TRAIL_TERMINAL_RE.sub("", out.rstrip()).rstrip()
+        elif not re.search(r"[.!?:]$", out):
+            first = _LEAD_WORD_RE.match(seg)
+            if (first and first.group(0)[0].isupper()
+                    and first.group(0).lower() in _JOIN_FUNCTION_WORDS):
+                seg = seg[0].lower() + seg[1:]
+        out = out + " " + seg
+    return out
+
+
 def _prefetch_pump(session):
     """One bookkeeping step: measure any newly-arrived blocks' RMS, check for
     a qualifying pause, and if one exists, transcribe up to it right away.
@@ -1367,7 +1499,10 @@ def stop_and_transcribe():
             tail_sec = duration - pre_done_sec
             log(f">> Prefetch: {len(session.texts)} segs, {pre_done_sec:.1f}s "
                 f"pre-done; tail {tail_sec:.1f}s (decoded in {tail_decode_sec:.2f}s)")
-            text = " ".join(t for t in (session.texts + [tail_text]) if t)
+            segs = session.texts + [tail_text]
+            text = repair_segment_joins(segs)
+            if text != " ".join(t for t in segs if t):
+                log(">> Join repair: smoothed segment boundary artifacts")
             if PREFETCH_COMPARE and text:
                 threading.Thread(
                     target=_shadow_compare,
