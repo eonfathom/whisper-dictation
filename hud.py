@@ -1,8 +1,10 @@
 """Floating dictation HUD for Vox (Windows).
 
-A tiny always-on-top overlay anchored to the text caret while you hold the
-push-to-talk chord: a red plus marking the insertion point, a live elapsed
-timer (seconds) and a mic level meter. On release the timer turns into a yellow
+A tiny always-on-top overlay pinned to the bottom-right of the monitor you
+are dictating into - the one holding the focused window at chord-press
+(Wispr Flow style; VOX_HUD_ANCHOR chooses caret/cursor tracking instead) while
+you hold the push-to-talk chord: a red plus, a live elapsed timer (seconds)
+and a mic level meter. On release the timer turns into a yellow
 release-to-paste latency clock, then freezes that latency plus the word/token
 count for a moment and disappears.
 
@@ -48,11 +50,15 @@ if IS_WINDOWS:
 ENABLED = os.environ.get("VOX_HUD", "1").strip().lower() not in (
     "0", "false", "off", "no",
 )
-# Placement: "caret" anchors to the text insertion point where available and
-# falls back to a static position captured at record-start (never chases the
-# mouse); "cursor" follows the mouse live (old behavior); "corner" pins to the
-# primary screen's bottom-right.
-ANCHOR = os.environ.get("VOX_HUD_ANCHOR", "caret").strip().lower()
+# Placement: "corner" (default) pins the HUD to a fixed spot at the
+# bottom-right of the monitor being dictated into (the focused window's
+# monitor, sampled at chord-press), just above the taskbar - Wispr style. One
+# predictable place, zero per-frame position tracking (the caret/cursor modes
+# visibly lagged the pointer, and the caret is invisible to the OS in
+# Electron/Chromium apps anyway, so "anchored to the text" mostly wasn't).
+# "caret" anchors to the text insertion point where available, falling back to
+# a static position captured at record-start; "cursor" follows the mouse live.
+ANCHOR = os.environ.get("VOX_HUD_ANCHOR", "corner").strip().lower()
 
 # Thin by design: Segoe UI Light, small, normal weight, no shadow. All tunable
 # live via env so styling doesn't need a code change.
@@ -89,6 +95,14 @@ PLUS_DX = _int_env("VOX_HUD_PLUS_DX", 0)
 PLUS_DY = _int_env("VOX_HUD_PLUS_DY", 0)
 CARET_DX = _int_env("VOX_HUD_DX", 16)   # timer group, right of the caret
 CARET_DY = _int_env("VOX_HUD_DY", 0)
+
+# Corner-mode margins (96dpi px, DPI-scaled): where the plus sits relative to
+# the primary work area's bottom-right corner. MX leaves room to the RIGHT of
+# the plus for the timer/meter/result readout (~150px worst case) so nothing
+# runs off screen; MY floats it just above the taskbar (the work area already
+# excludes the taskbar itself).
+CORNER_MX = _int_env("VOX_HUD_CORNER_MX", 200)
+CORNER_MY = _int_env("VOX_HUD_CORNER_MY", 24)
 
 
 def _opacity():
@@ -188,6 +202,49 @@ def _virtual_screen():
     return m(76), m(77), m(78), m(79)  # SM_[XY]VIRTUALSCREEN, SM_C[XY]VIRTUALSCREEN
 
 
+def _work_area():
+    """Primary monitor work area (left, top, right, bottom) - the desktop
+    minus the taskbar, so corner placement clears it at any taskbar size or
+    position instead of guessing with a fixed offset."""
+    r = _Rect()
+    if ctypes.windll.user32.SystemParametersInfoW(
+            0x0030, 0, ctypes.byref(r), 0):  # SPI_GETWORKAREA
+        return r.left, r.top, r.right, r.bottom
+    m = ctypes.windll.user32.GetSystemMetrics
+    return 0, 0, m(0), m(1)  # SM_CXSCREEN, SM_CYSCREEN
+
+
+class _MonitorInfo(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", _Rect),
+                ("rcWork", _Rect), ("dwFlags", ctypes.c_ulong)]
+
+
+def _focus_work_area():
+    """Work area of the monitor holding the FOCUSED window - i.e. the one
+    being dictated into - so on a multi-monitor desktop the corner HUD shows
+    up where you're actually looking, not on the primary screen. Falls back
+    to the mouse's monitor (no foreground window), then the primary."""
+    try:
+        u = ctypes.windll.user32
+        hmon = None
+        fg = u.GetForegroundWindow()
+        if fg:
+            hmon = u.MonitorFromWindow(fg, 2)  # MONITOR_DEFAULTTONEAREST
+        if not hmon:
+            pt = _Point()
+            u.GetCursorPos(ctypes.byref(pt))
+            hmon = u.MonitorFromPoint(pt, 2)
+        if hmon:
+            mi = _MonitorInfo()
+            mi.cbSize = ctypes.sizeof(mi)
+            if u.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                r = mi.rcWork
+                return r.left, r.top, r.right, r.bottom
+    except Exception:
+        pass
+    return _work_area()
+
+
 class Hud:
     """State mailbox + tk thread. See module docstring for the contract."""
 
@@ -203,6 +260,7 @@ class Hud:
         self._tokens = None
         self._done_at = 0.0
         self._anchor = (0, 0)      # static fallback position (mouse at rec start)
+        self._corner_wa = None     # work area of the dictated-into monitor
         # DPI scale + scaled geometry; real values set in _run once the window
         # exists. 1.0/base defaults keep direct _draw use (tests, demo) working.
         self._k = 1.0
@@ -230,11 +288,16 @@ class Hud:
         self.level_db = -120.0
         # Static fallback anchor: where the mouse is at record-start. Used only
         # when no caret is available, and captured ONCE so the HUD holds still
-        # instead of chasing the mouse.
+        # instead of chasing the mouse. The corner work area is likewise
+        # captured once per session: the monitor focused at chord-press is the
+        # one being dictated into, and a mid-dictation focus change must not
+        # make the HUD jump screens.
         try:
             self._anchor = _cursor_pos() if IS_WINDOWS else (0, 0)
+            self._corner_wa = _focus_work_area() if IS_WINDOWS else None
         except Exception:
             self._anchor = (0, 0)
+            self._corner_wa = None
         self._gen += 1
         self.phase = "rec"
         return self._gen
@@ -350,9 +413,14 @@ class Hud:
 
     def _place(self):
         if ANCHOR == "corner":
-            sw = self._root.winfo_screenwidth()
-            sh = self._root.winfo_screenheight()
-            x, y = sw - self._w - 24, sh - self._h - 64
+            # Fixed spot: the plus lands CORNER_MX/MY (scaled) inside the
+            # bottom-right corner of the dictated-into monitor's work area
+            # (captured at record-start); timer/meter grow rightward into that
+            # reserved margin. Static by design - nothing to track, no lag.
+            _, _, wr, wb = self._corner_wa or _focus_work_area()
+            ax = wr - int(CORNER_MX * self._k)
+            ay = wb - int(CORNER_MY * self._k)
+            x, y = ax - self._cax, ay - self._cay
         elif ANCHOR == "cursor":
             cx, cy = _cursor_pos()
             ax = cx + int(_CURSOR_OFFSET[0] * self._k)
