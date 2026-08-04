@@ -126,8 +126,8 @@ Configuration is via environment variables.
 | `VOX_HUD_ANCHOR` | `corner` | `caret` anchors to the text insertion point where the OS exposes it (static fallback elsewhere); `cursor` follows the mouse live |
 | `VOX_LOG` | auto | Diagnostic log file (rotating, 512 KB × 2). Default `%LOCALAPPDATA%\vox\vox.log` (Linux: `~/.local/state/vox/vox.log`); set a path to move it or `0` to disable |
 | `VOX_TRANSCRIPT_DIR` | unset | Directory (e.g. an Obsidian folder) for a per-day markdown record of everything you dictate (`YYYY-MM-DD vox.md`, one `- **HH:MM** text` bullet per dictation). Unset = off |
-| `VOX_LLM` | `off` | Optional LLM cleanup pass. `local` = a local OpenAI-compatible server (Ollama; offline, no API key — **recommended**); `anthropic` = Claude via API (needs `ANTHROPIC_API_KEY`) |
-| `VOX_LLM_MODEL` | `qwen3:4b-instruct` (local) / `claude-haiku-4-5` (anthropic) | Model for the cleanup pass. Local default is the smallest model that reliably rewrites spoken self-corrections (see benchmark note in `dictation.py`); warm ~0.7–1.2s even on CPU |
+| `VOX_LLM` | `off` | Optional LLM cleanup pass. `local` = a local OpenAI-compatible server (Ollama; offline, no API key); `anthropic` = Claude via API (needs `ANTHROPIC_API_KEY`); a comma list (`anthropic,local`) is a preference chain — backends race in parallel and the earliest-listed success wins, so cloud quality degrades to local automatically when offline |
+| `VOX_LLM_MODEL` | `qwen3:4b-instruct` (local) / `claude-haiku-4-5` (anthropic) | Model per backend. With a chain, a comma list aligned by position (`claude-haiku-4-5,qwen3:4b-instruct`); unset positions use the per-backend defaults. The local default is the smallest model that reliably rewrites spoken self-corrections (see benchmark note in `dictation.py`); warm ~0.7–1.2s even on CPU |
 | `VOX_LLM_URL` | `http://127.0.0.1:11434/v1` | Local server's OpenAI-compatible base URL (Ollama default; works with LM Studio, llama.cpp `--api`, etc.). Use `127.0.0.1`, not `localhost` — on Windows the latter stalls ~2s per request on IPv6 fallback |
 | `VOX_LLM_KEEPALIVE` | `30m` | Keep the local model resident between dictations so there's no reload latency (Ollama) |
 
@@ -144,7 +144,7 @@ $env:VOX_MODEL="tiny"; $env:VOX_DEVICE="cpu"; .\run-windows.ps1
 
 ### Optional: LLM cleanup (Wispr-style polish)
 
-By default Vox types the raw (offline) transcript. For Wispr-Flow-style polish — grammar, punctuation, removed filler, spoken commands like "new paragraph" / "scratch that", and spoken self-corrections ("…push to main or… sorry, submit a pull request" pastes as just the corrected version; "never mind, what I meant is…" keeps only the replacement) — enable an LLM pass. Two backends:
+By default Vox types the raw (offline) transcript. For Wispr-Flow-style polish — grammar, punctuation, removed filler, spoken commands like "new paragraph" / "scratch that", spoken self-corrections ("…push to main or… sorry, submit a pull request" pastes as just the corrected version; "never mind, what I meant is…" keeps only the replacement), and merged mid-thought pauses (Whisper's spurious "…edit a little bit. With Vox…" becomes one sentence again) — enable an LLM pass. Two backends, usable alone or chained:
 
 **Local (recommended — fully offline, no API key, low latency).** Runs against a local [Ollama](https://ollama.com) server on your own GPU:
 
@@ -163,9 +163,18 @@ setx ANTHROPIC_API_KEY sk-ant-...
 setx VOX_LLM anthropic
 ```
 
-This uses the official `anthropic` SDK (`pip install anthropic`), fast **Haiku** by default.
+This uses the official `anthropic` SDK (`pip install anthropic`), fast **Haiku** by default (~$0.001 per dictation).
 
-Either backend is **fully fail-safe**: no server/key, no internet, a timeout, or any error falls back to the raw transcript, so a dictation is never lost. Your personal `dictionary.json` corrections still run last, so brand terms like Rokid always survive.
+**Chained (best of both — cloud quality online, local on a plane):**
+
+```powershell
+setx ANTHROPIC_API_KEY sk-ant-...
+setx VOX_LLM anthropic,local
+```
+
+A comma-separated `VOX_LLM` is a preference chain: every dictation fires all backends in parallel under the same latency budget, and the earliest-listed one that succeeds wins. When the cloud is unreachable — plane, outage, missing key — that attempt fails in milliseconds and the local result, already in flight, serves the paste instead. No mode switching, no config change mid-flight.
+
+Every configuration is **fully fail-safe**: no server/key, no internet, a timeout, or any error falls back to the raw transcript, so a dictation is never lost. Your personal `dictionary.json` corrections still run last, so brand terms like Rokid always survive.
 
 ### Model size guide
 

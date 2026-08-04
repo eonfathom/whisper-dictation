@@ -26,6 +26,7 @@ import json
 import logging
 import logging.handlers
 import os
+import queue
 import re
 import sys
 import threading
@@ -176,15 +177,21 @@ CHANNELS = 1
 # Optional LLM cleanup pass (Wispr-style). Off by default. Fixes punctuation,
 # capitalization, fillers, false starts, and honors spoken commands. Any
 # failure/offline/timeout falls back to the raw text - a dictation is never lost.
-#   VOX_LLM=local     -> a LOCAL OpenAI-compatible server (Ollama by default);
-#                        fully offline, no API key, low latency. RECOMMENDED.
-#   VOX_LLM=anthropic -> Claude via the Anthropic API (needs ANTHROPIC_API_KEY).
+#   VOX_LLM=local           -> a LOCAL OpenAI-compatible server (Ollama by
+#                              default); fully offline, no API key.
+#   VOX_LLM=anthropic       -> Claude via the Anthropic API (ANTHROPIC_API_KEY).
+#   VOX_LLM=anthropic,local -> a PREFERENCE CHAIN: backends race in parallel
+#                              under the same LLM_BUDGET and the best-preference
+#                              finisher wins, so cloud quality when online falls
+#                              back to local on a plane with no config change.
 # VOX_LLM_URL points at the local server's OpenAI-compatible base (default
-# Ollama). VOX_LLM_MODEL picks the model; the local default is a small, fast
-# instruct model. VOX_LLM_KEEPALIVE keeps the model resident between dictations
-# so there's no reload latency (Ollama-specific, ignored elsewhere).
+# Ollama). VOX_LLM_MODEL picks the model per backend (comma list aligned with
+# the chain; unset entries use per-backend defaults). VOX_LLM_KEEPALIVE keeps
+# the local model resident between dictations (Ollama-specific).
 LLM_BACKEND = os.environ.get("VOX_LLM", "off").lower()
 _LOCAL_BACKENDS = ("local", "ollama", "openai-compatible")
+LLM_CHAIN = [b.strip() for b in LLM_BACKEND.split(",")
+             if b.strip() and b.strip() != "off"]
 # qwen3:4b-instruct: benchmarked 2026-08-03 against qwen2.5:3b-instruct on the
 # self-repair suite (CPU, Core Ultra 9 386H: 0.7-1.2s warm, inside LLM_BUDGET;
 # GPU is faster still). The 2.5-3b handles verbatim restarts and simple "no
@@ -195,10 +202,20 @@ _LOCAL_BACKENDS = ("local", "ollama", "openai-compatible")
 # points") - is undone deterministically by _rejoin_split_words. Earlier
 # history: qwen2.5:1.5b fabricated ("rokid glasses" -> "ZenBook") and flipped
 # pronouns (benchmarked 2026-07-14); llama3.2:3b chats back. Both rejected.
-_DEFAULT_MODEL = (
-    "qwen3:4b-instruct" if LLM_BACKEND in _LOCAL_BACKENDS else "claude-haiku-4-5"
-)
-LLM_MODEL = os.environ.get("VOX_LLM_MODEL", _DEFAULT_MODEL)
+# claude-haiku-4-5 (anthropic backend): fastest Claude tier, ~$0.001/dictation.
+
+
+def _default_model(backend):
+    return "qwen3:4b-instruct" if backend in _LOCAL_BACKENDS else "claude-haiku-4-5"
+
+
+_MODEL_OVERRIDES = [m.strip() for m in
+                    os.environ.get("VOX_LLM_MODEL", "").split(",") if m.strip()]
+
+
+def _backend_model(i, backend):
+    """Model for chain position i: the aligned VOX_LLM_MODEL entry, else default."""
+    return _MODEL_OVERRIDES[i] if i < len(_MODEL_OVERRIDES) else _default_model(backend)
 # 127.0.0.1, not "localhost": on Windows the hostname resolves to IPv6 ::1 first
 # and stalls ~2s per request before IPv4 fallback (measured), swamping inference.
 LLM_URL = os.environ.get("VOX_LLM_URL", "http://127.0.0.1:11434/v1").rstrip("/")
@@ -807,7 +824,10 @@ def _cleanup_system_prompt():
         "right before the editing term), the editing phrase itself, and any "
         "garbled fragment of the abandoned attempt. If they discard a whole "
         "thought (\"never mind, what I meant is...\"), keep only the "
-        "replacement. If the transcript already reads correctly, return it "
+        "replacement. The transcriber often inserts a period and a capital "
+        "letter where the speaker merely paused mid-sentence; when a fragment "
+        "continues the previous thought, merge it back into one sentence. If "
+        "the transcript already reads correctly, return it "
         "unchanged apart from final punctuation - never respell, hyphenate, or "
         "reword what is already right. Do NOT otherwise add, "
         "remove, or answer content. Never reply, greet, agree, "
@@ -823,7 +843,8 @@ def _cleanup_system_prompt():
 # never answered - this is what actually stops small models from chatting back.
 # The 5th-7th teach the three self-repair shapes: reworded correction, mid-sentence
 # replacement (with a garbled fragment of the abandoned word), and whole-thought
-# retraction ("never mind, what I meant is").
+# retraction ("never mind, what I meant is"). The 8th teaches merging a spurious
+# sentence break - Whisper ends the sentence wherever the speaker pauses.
 _CLEANUP_SHOTS = [
     ("um so i think we should uh call richie new paragraph then play with the scanner",
      "I think we should call Richie.\n\nThen play with the scanner."),
@@ -838,6 +859,8 @@ _CLEANUP_SHOTS = [
      "Okay, that looks perfect. Can you commit and submit a pull request?"),
     ("we should do the sync on tuesday oops never mind what i meant is let's just handle it async",
      "Let's just handle it async."),
+    ("I have to constantly edit a little bit. With Vox rather than Wispr Flow.",
+     "I have to constantly edit a little bit with Vox rather than Wispr Flow."),
     ("okay dictation is really messing up now",
      "Okay, dictation is really messing up now."),
 ]
@@ -852,7 +875,7 @@ def _cleanup_fewshot():
     return msgs
 
 
-def _llm_format_local(text, system):
+def _llm_format_local(text, system, model):
     """Cleanup via a LOCAL OpenAI-compatible chat endpoint (Ollama etc.).
 
     Stdlib-only (urllib), so no extra dependency and nothing to install in the
@@ -863,7 +886,7 @@ def _llm_format_local(text, system):
     before falling back to IPv4, which dwarfs the model's own ~0.2s inference.
     """
     payload = {
-        "model": LLM_MODEL,
+        "model": model,
         "messages": (
             [{"role": "system", "content": system}]
             + _cleanup_fewshot()
@@ -886,12 +909,22 @@ def _llm_format_local(text, system):
     return data["choices"][0]["message"]["content"].strip()
 
 
-def _llm_format_anthropic(text, system):
-    """Cleanup via the Anthropic API (needs ANTHROPIC_API_KEY). Uses the SDK."""
-    import anthropic
-    client = anthropic.Anthropic(max_retries=0, timeout=LLM_TIMEOUT)
-    msg = client.messages.create(
-        model=LLM_MODEL,
+_ANTHROPIC_CLIENT = None
+
+
+def _llm_format_anthropic(text, system, model):
+    """Cleanup via the Anthropic API (needs ANTHROPIC_API_KEY). Uses the SDK.
+
+    The client is created once and reused so per-dictation calls keep the
+    pooled TLS connection - rebuilding it would add a few hundred ms of
+    handshake on top of the model's own latency.
+    """
+    global _ANTHROPIC_CLIENT
+    if _ANTHROPIC_CLIENT is None:
+        import anthropic
+        _ANTHROPIC_CLIENT = anthropic.Anthropic(max_retries=0, timeout=LLM_TIMEOUT)
+    msg = _ANTHROPIC_CLIENT.messages.create(
+        model=model,
         max_tokens=4000,
         system=system,
         messages=_cleanup_fewshot() + [{"role": "user", "content": text}],
@@ -906,17 +939,21 @@ def warm_llm():
     the first real dictation would block or time out and fall back to raw text.
     Runs in a background thread at startup so it never delays readiness, and is
     best-effort - if the server isn't up yet it just logs and moves on (the
-    first dictation pays the load cost instead). Local backend only.
+    first dictation pays the load cost instead). Warms the first LOCAL backend
+    in the chain - a chain like "anthropic,local" still keeps its offline
+    fallback hot, which is the whole point of the fallback.
     """
-    if LLM_BACKEND not in _LOCAL_BACKENDS:
+    local_model = next((_backend_model(i, b) for i, b in enumerate(LLM_CHAIN)
+                        if b in _LOCAL_BACKENDS), None)
+    if local_model is None:
         return
 
     def _warm():
         try:
             t0 = time.monotonic()
-            _llm_format_local("ok", _cleanup_system_prompt())
+            _llm_format_local("ok", _cleanup_system_prompt(), local_model)
             log(f">> LLM warm-up done in {time.monotonic() - t0:.1f}s "
-                f"({LLM_MODEL} resident)")
+                f"({local_model} resident)")
         except Exception as e:
             log(f">> LLM warm-up skipped ({e.__class__.__name__}); "
                 "first dictation will load the model")
@@ -928,7 +965,7 @@ def warm_llm():
         while LLM_KEEPWARM_SEC > 0:
             time.sleep(LLM_KEEPWARM_SEC)
             try:
-                _llm_format_local("ok", _cleanup_system_prompt())
+                _llm_format_local("ok", _cleanup_system_prompt(), local_model)
             except Exception:
                 pass
 
@@ -1050,48 +1087,85 @@ def _rejoin_split_words(raw, cleaned):
 def llm_format(text):
     """Optional Wispr-style cleanup: polish the raw transcript with an LLM.
 
-    Off unless VOX_LLM is set: "local" (default) uses a local OpenAI-compatible
-    server - offline, no API key; "anthropic" uses Claude. Fixes
-    grammar/punctuation/capitalization, drops fillers and false starts, and obeys
-    spoken commands. On offline/timeout/any error it returns the input unchanged,
-    so a dictation is never lost; a response that fails the reply-detection guard
-    is likewise discarded in favor of the raw text.
+    Off unless VOX_LLM is set. A single backend ("local" or "anthropic") works
+    as before; a comma list ("anthropic,local") is a PREFERENCE CHAIN: all
+    backends fire in parallel and the answer from the earliest-listed backend
+    that succeeds wins. The race - rather than try-then-fall-back - keeps the
+    worst case inside one LLM_BUDGET: when the cloud is unreachable (plane,
+    outage, missing key) its attempt fails in milliseconds and the local
+    result, already in flight, serves the dictation. A result that fails the
+    reply/deletion guards is skipped in favor of the next backend's; if
+    nothing usable answers in time, the raw transcript is pasted - a
+    dictation is never lost. Late finishers are discarded (which conveniently
+    re-warms that backend for the next dictation).
     """
-    if LLM_BACKEND in ("off", "") or not text.strip():
+    if not LLM_CHAIN or not text.strip():
         return text
     t0 = time.monotonic()
     try:
         system = _cleanup_system_prompt()
-        if LLM_BACKEND in _LOCAL_BACKENDS:
-            backend = _llm_format_local
-        elif LLM_BACKEND == "anthropic":
-            backend = _llm_format_anthropic
-        else:
-            log(f">> Unknown VOX_LLM={LLM_BACKEND!r}; using raw text")
-            return text
-        # Run the backend on a worker so the paste can't stall past LLM_BUDGET:
-        # a cold/paged-out model takes seconds, and raw-now beats polished-late.
-        # An over-budget worker finishes in the background (result discarded),
-        # which conveniently also re-warms the model for the next dictation.
-        result = []
-        worker = threading.Thread(
-            target=lambda: result.append(backend(text, system)), daemon=True)
-        worker.start()
-        worker.join(LLM_BUDGET)
-        if not result:
-            log(f">> LLM cleanup over budget ({LLM_BUDGET:.1f}s); using raw text")
-            return text
-        cleaned = result[0]
-        if cleaned and _looks_like_reply(text, cleaned):
-            log(f">> LLM cleanup rejected (reply-like output: {cleaned[:80]!r}); "
+        outcomes = {}          # chain index -> cleaned text, or None on failure
+        answers = queue.Queue()
+
+        def _run(i, backend_fn, model):
+            try:
+                answers.put((i, backend_fn(text, system, model)))
+            except Exception as e:
+                log(f">> LLM backend '{LLM_CHAIN[i]}' failed "
+                    f"({e.__class__.__name__}: {e})")
+                answers.put((i, None))
+
+        for i, name in enumerate(LLM_CHAIN):
+            fn = (_llm_format_local if name in _LOCAL_BACKENDS
+                  else _llm_format_anthropic if name == "anthropic" else None)
+            if fn is None:
+                log(f">> Unknown VOX_LLM backend {name!r}; skipping")
+                outcomes[i] = None
+                continue
+            threading.Thread(target=_run, args=(i, fn, _backend_model(i, name)),
+                             daemon=True).start()
+
+        deadline = t0 + LLM_BUDGET
+        while len(outcomes) < len(LLM_CHAIN):
+            # Settled as soon as some backend has answered AND every
+            # better-preference backend has already failed - waiting longer
+            # could only produce answers we would not prefer.
+            settled = False
+            for i in range(len(LLM_CHAIN)):
+                if i not in outcomes:
+                    break              # still hoping for a better backend
+                if outcomes[i] is not None:
+                    settled = True
+                    break
+            if settled:
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                i, res = answers.get(timeout=remaining)
+            except queue.Empty:
+                break
+            outcomes[i] = res
+
+        for i in range(len(LLM_CHAIN)):
+            cleaned = outcomes.get(i)      # missing (still pending) -> None
+            if not cleaned:
+                continue
+            if _looks_like_reply(text, cleaned):
+                log(f">> LLM cleanup rejected (reply-like output from "
+                    f"'{LLM_CHAIN[i]}': {cleaned[:80]!r})")
+                continue
+            if _dropped_too_much(text, cleaned):
+                log(f">> LLM cleanup rejected (dropped too much speech, "
+                    f"'{LLM_CHAIN[i]}': {cleaned[:80]!r})")
+                continue
+            log(f">> LLM cleanup ({LLM_CHAIN[i]}) in {time.monotonic() - t0:.2f}s")
+            return _rejoin_split_words(text, cleaned)
+        if not any(outcomes.values()):
+            log(f">> LLM cleanup: no backend answered within {LLM_BUDGET:.1f}s; "
                 "using raw text")
-            return text
-        if cleaned and _dropped_too_much(text, cleaned):
-            log(f">> LLM cleanup rejected (dropped too much speech: "
-                f"{cleaned[:80]!r}); using raw text")
-            return text
-        log(f">> LLM cleanup ({LLM_BACKEND}) in {time.monotonic() - t0:.2f}s")
-        return _rejoin_split_words(text, cleaned) if cleaned else text
+        return text
     except Exception as e:
         log(f">> LLM cleanup skipped ({e.__class__.__name__}: {e}); using raw text")
         return text
@@ -1105,7 +1179,7 @@ def post_process(text):
     corrections LAST so they always win (e.g. Rokid) even over the LLM's rewrite.
     """
     text = clean_text(  # 1. strip fillers, tidy spacing ("I mean," survives for the LLM)
-        text, keep_repair_cues=LLM_BACKEND not in ("off", ""))
+        text, keep_repair_cues=bool(LLM_CHAIN))
     text = collapse_restarts(text)           # 2. drop verbatim restated fragments
     text = strip_trailing_hotword_run(text)  # 3. drop verbatim hotword-prompt echo
     text = strip_trailing_phantoms(text)     # 4. drop hallucinated trailing hotwords
@@ -2544,8 +2618,9 @@ def write_status_doc():
         f"- Microphone: {_mic_name} (source: {MIC_SOURCE})",
         f"- Model: `{MODEL_SIZE}`",
         f"- Device: `{DEVICE}` ({COMPUTE_TYPE})",
-        f"- LLM cleanup: {LLM_BACKEND}"
-        + (f" (`{LLM_MODEL}`)" if LLM_BACKEND != 'off' else ""),
+        "- LLM cleanup: " + (" -> ".join(
+            f"{b} (`{_backend_model(i, b)}`)" for i, b in enumerate(LLM_CHAIN)
+        ) or "off"),
         f"- Dictionary: {len(hotwords)} hotwords, {len(corrections)} corrections",
         f"- Autostart: {_autostart_state()}",
         f"- Settings file: `{SETTINGS_PATH}`{settings_note}",
@@ -2786,8 +2861,9 @@ def main():
     log(f"  Hotkey: {HOTKEY_LABEL} (source: {HOTKEY_SOURCE})")
     if not isinstance(tray, _tray_mod.NullTray):
         log("  Tray:   on (right-click the tray icon for menu)")
-    if LLM_BACKEND != "off":
-        log(f"  LLM cleanup: {LLM_BACKEND} ({LLM_MODEL})")
+    if LLM_CHAIN:
+        log("  LLM cleanup: " + " -> ".join(
+            f"{b} ({_backend_model(i, b)})" for i, b in enumerate(LLM_CHAIN)))
     if HOTWORDS or CORRECTIONS:
         log(f"  Dictionary: {len(HOTWORDS)} hotwords, "
             f"{len(CORRECTIONS)} corrections")
