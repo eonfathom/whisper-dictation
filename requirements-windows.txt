@@ -7,6 +7,9 @@ pystray
 pillow
 comtypes
 
+# For the optional VOX_LLM=anthropic cleanup backend (cloud Claude):
+anthropic
+
 # For NVIDIA GPU acceleration (skip on machines without an NVIDIA GPU,
 # e.g. Intel-only laptops - the app falls back to CPU automatically):
 #   pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 nvidia-cuda-runtime-cu12
