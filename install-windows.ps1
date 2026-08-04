@@ -40,7 +40,7 @@ Write-Host "Upgrading pip..."
 & $python -m pip install --upgrade pip | Out-Null
 
 Write-Host "Installing core dependencies..."
-& $python -m pip install faster-whisper sounddevice numpy pynput pyperclip
+& $python -m pip install faster-whisper sounddevice numpy pynput pyperclip pystray pillow
 
 if ($hasGpu) {
     Write-Host "NVIDIA GPU detected - installing CUDA libraries (cuBLAS, cuDNN, cudart)..." -ForegroundColor Green

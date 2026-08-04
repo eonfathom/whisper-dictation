@@ -15,10 +15,16 @@
     "faster-whisper",
     "OBS",
     "Andregg",
-    "Rokid"
+    "Rokid",
+    "Aurelia",
+    "connectome",
+    "connectomics"
   ],
 
   "corrections": {
+    "connect home": "connectome",
+    "connect ohm": "connectome",
+    "aurelia": "Aurelia",
     "clod code": "Claude Code",
     "cloud code": "Claude Code",
     "wisper flow": "Wispr Flow",

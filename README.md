@@ -98,7 +98,7 @@ Vox runs windowless, so use the bundled control script from the repo folder:
 
 `stop` frees the model's VRAM if you need the GPU for something else; `start` brings it back. If PowerShell blocks it: `powershell -ExecutionPolicy Bypass -File .\vox.ps1 restart`.
 
-**Self-healing:** `.\vox.ps1 guard` runs a guardian loop that starts Vox and restarts it within ~20 s if it ever dies (with crash-storm backoff and duplicate-instance cleanup, logged to `%LOCALAPPDATA%\vox\guardian.log`). Point your Startup shortcut at `powershell -WindowStyle Hidden -ExecutionPolicy Bypass -File vox.ps1 guard` instead of pythonw directly and dictation becomes unkillable across crashes. `stop` stops the guardian too, so a deliberate stop stays stopped.
+**Self-healing:** `.\vox.ps1 guard` runs a guardian loop that starts Vox and restarts it within ~20 s if it ever dies (with crash-storm backoff and duplicate-instance cleanup, logged to `%LOCALAPPDATA%\vox\guardian.log`). Point your Startup shortcut at `wscript.exe "<repo>\vox-guard.vbs"` (which runs the guardian with zero console flash at login - aiming the shortcut at powershell directly flashes a window even with `-WindowStyle Hidden`) and dictation becomes unkillable across crashes. `stop` stops the guardian too, so a deliberate stop stays stopped.
 
 ## Configuration
 
@@ -112,6 +112,7 @@ Configuration is via environment variables.
 | `VOX_MODEL` | auto | `large-v3` on a CUDA GPU, `base` on CPU. Override with `tiny`/`base`/`small`/`medium`/`large-v3` |
 | `VOX_LANG` | `en` | Language code (`en`, `es`, `fr`, …) or empty for auto-detect |
 | `VOX_HOTKEY` | `ctrl+win` | Push-to-talk chord; `+`-joined modifiers from `ctrl`, `alt`, `win`, `shift` |
+| `VOX_MIC` | system default | Input device by name (as listed in the tray's Microphone menu, e.g. `Headset (Glasses_4743)`). Easier: pick it from the tray — the choice persists per machine in `settings.local.json`, and an absent device falls back to the system default. Use the tray's "Rescan devices" after connecting a Bluetooth/USB mic mid-session |
 | `VOX_BEAM` | `5` | Decoding beam width; higher = more accurate, a bit slower. Use `1` on a slow CPU |
 | `VOX_RELEASE_TAIL` | `0.2` | Seconds to keep recording after release so trailing words aren't clipped |
 | `VOX_PAD` | `0.15` | Seconds of trailing silence padded onto the buffer so Whisper finalizes the last segment |
@@ -119,12 +120,14 @@ Configuration is via environment variables.
 | `VOX_COMPUTE` | auto | `float16` on GPU, `int8` on CPU. Override with `float16`/`int8`/`float32`. |
 | `VOX_DICT` | `dictionary.json` | Path to the personal dictionary file |
 | `VOX_STRIP_PHANTOMS` | `1` | Strip hallucinated trailing hotword echoes from the transcript. Set `0` to disable |
+| `VOX_RESTARTS` | `1` | Collapse verbatim sentence restarts ("we need the, we need the plan" → "we need the plan") without an LLM. `0` to disable |
+| `VOX_SMARTCASE` | `1` | Insertion-aware casing (Windows): reads the text around the caret (UI Automation, app-dependent; falls back to vox's own last paste) so dictating mid-sentence doesn't start with a capital, glue words together, or split the sentence with a period. `0` to disable |
 | `VOX_HUD` | `1` | Floating dictation HUD (Windows): a click-through overlay pinned above the taskbar at the bottom-right of the monitor you're dictating into — a red plus, live elapsed timer, and mic level meter while you hold the chord; then a release-to-paste latency clock and a brief `words · tokens` result flash. `0` to disable |
 | `VOX_HUD_ANCHOR` | `corner` | `caret` anchors to the text insertion point where the OS exposes it (static fallback elsewhere); `cursor` follows the mouse live |
 | `VOX_LOG` | auto | Diagnostic log file (rotating, 512 KB × 2). Default `%LOCALAPPDATA%\vox\vox.log` (Linux: `~/.local/state/vox/vox.log`); set a path to move it or `0` to disable |
 | `VOX_TRANSCRIPT_DIR` | unset | Directory (e.g. an Obsidian folder) for a per-day markdown record of everything you dictate (`YYYY-MM-DD vox.md`, one `- **HH:MM** text` bullet per dictation). Unset = off |
 | `VOX_LLM` | `off` | Optional LLM cleanup pass. `local` = a local OpenAI-compatible server (Ollama; offline, no API key — **recommended**); `anthropic` = Claude via API (needs `ANTHROPIC_API_KEY`) |
-| `VOX_LLM_MODEL` | `qwen2.5:1.5b-instruct` (local) / `claude-haiku-4-5` (anthropic) | Model for the cleanup pass. Local default is small + strongly instruction-following (~0.2s on a GPU); a bigger model (`qwen2.5:3b-instruct`) polishes more at some latency cost |
+| `VOX_LLM_MODEL` | `qwen3:4b-instruct` (local) / `claude-haiku-4-5` (anthropic) | Model for the cleanup pass. Local default is the smallest model that reliably rewrites spoken self-corrections (see benchmark note in `dictation.py`); warm ~0.7–1.2s even on CPU |
 | `VOX_LLM_URL` | `http://127.0.0.1:11434/v1` | Local server's OpenAI-compatible base URL (Ollama default; works with LM Studio, llama.cpp `--api`, etc.). Use `127.0.0.1`, not `localhost` — on Windows the latter stalls ~2s per request on IPv6 fallback |
 | `VOX_LLM_KEEPALIVE` | `30m` | Keep the local model resident between dictations so there's no reload latency (Ollama) |
 
@@ -141,17 +144,17 @@ $env:VOX_MODEL="tiny"; $env:VOX_DEVICE="cpu"; .\run-windows.ps1
 
 ### Optional: LLM cleanup (Wispr-style polish)
 
-By default Vox types the raw (offline) transcript. For Wispr-Flow-style polish — grammar, punctuation, removed filler, and spoken commands like "new paragraph" / "scratch that" — enable an LLM pass. Two backends:
+By default Vox types the raw (offline) transcript. For Wispr-Flow-style polish — grammar, punctuation, removed filler, spoken commands like "new paragraph" / "scratch that", and spoken self-corrections ("…push to main or… sorry, submit a pull request" pastes as just the corrected version; "never mind, what I meant is…" keeps only the replacement) — enable an LLM pass. Two backends:
 
 **Local (recommended — fully offline, no API key, low latency).** Runs against a local [Ollama](https://ollama.com) server on your own GPU:
 
 ```powershell
 winget install Ollama.Ollama       # once
-ollama pull qwen2.5:1.5b-instruct  # small, fast, instruction-following
+ollama pull qwen3:4b-instruct      # small, fast, handles self-corrections
 setx VOX_LLM local
 ```
 
-Restart Vox. It POSTs the raw transcript to the local OpenAI-compatible endpoint (`VOX_LLM_URL`, default Ollama at `127.0.0.1:11434/v1`) using only the Python standard library — no extra package to install. A warm pass is **~0.2s**; the model is pre-loaded at startup and stays resident (`VOX_LLM_KEEPALIVE`) so there's no per-dictation reload. Point `VOX_LLM_URL` at LM Studio or `llama.cpp --api` instead if you prefer. Model choice matters more than size here — pick one that *follows instructions* (returns cleaned text) rather than *chats back*; `qwen2.5:1.5b-instruct` is the tested default, `qwen2.5:3b-instruct` polishes a bit more. Avoid `llama3.2:3b` — it tends to reply to the transcript instead of cleaning it.
+Restart Vox. It POSTs the raw transcript to the local OpenAI-compatible endpoint (`VOX_LLM_URL`, default Ollama at `127.0.0.1:11434/v1`) using only the Python standard library — no extra package to install. A warm pass is well under a second on a GPU and **~0.7–1.2s on a fast CPU** (measured on a Core Ultra 9); the model is pre-loaded at startup and stays resident (`VOX_LLM_KEEPALIVE`) so there's no per-dictation reload. Point `VOX_LLM_URL` at LM Studio or `llama.cpp --api` instead if you prefer. Model choice matters more than size here — pick one that *follows instructions* (returns cleaned text) rather than *chats back*; `qwen3:4b-instruct` is the tested default and the smallest model that handles mid-sentence self-corrections, including either/or retractions ("…push to main or… sorry, submit a pull request") that `qwen2.5:3b-instruct` refuses at any prompt. Avoid `llama3.2:3b` — it tends to reply to the transcript instead of cleaning it.
 
 **Anthropic (cloud).** Highest quality, needs a key and internet:
 

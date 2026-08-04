@@ -3,6 +3,9 @@ sounddevice
 numpy
 pynput
 pyperclip
+pystray
+pillow
+comtypes
 
 # For NVIDIA GPU acceleration (skip on machines without an NVIDIA GPU,
 # e.g. Intel-only laptops - the app falls back to CPU automatically):
