@@ -31,7 +31,9 @@ import re
 import sys
 import threading
 import time
+import socket
 import urllib.error
+import urllib.parse
 import urllib.request
 import wave
 
@@ -181,17 +183,38 @@ CHANNELS = 1
 #                              default); fully offline, no API key.
 #   VOX_LLM=anthropic       -> Claude via the Anthropic API (ANTHROPIC_API_KEY).
 #   VOX_LLM=anthropic,local -> a PREFERENCE CHAIN: backends race in parallel
-#                              under the same LLM_BUDGET and the best-preference
+#                              under the same race budget and the best-preference
 #                              finisher wins, so cloud quality when online falls
 #                              back to local on a plane with no config change.
-# VOX_LLM_URL points at the local server's OpenAI-compatible base (default
-# Ollama). VOX_LLM_MODEL picks the model per backend (comma list aligned with
+#   VOX_LLM=remote,local    -> "remote" is a readable alias for the same
+#                              OpenAI-compatible driver, meant for a big model
+#                              on another box (home GPU / Mac): best quality
+#                              when reachable, laptop-local when not.
+# VOX_LLM_URL points at the OpenAI-compatible base (default local Ollama).
+# A single value serves every local-style backend; a comma list is
+# position-aligned with the chain (like VOX_LLM_MODEL), e.g.
+#   VOX_LLM=remote,local
+#   VOX_LLM_URL=http://100.82.124.72:11434/v1,http://127.0.0.1:11434/v1
+#   VOX_LLM_MODEL=qwen3:30b-a3b-instruct-2507,qwen3:4b-instruct
+# VOX_LLM_MODEL picks the model per backend (comma list aligned with
 # the chain; unset entries use per-backend defaults). VOX_LLM_KEEPALIVE keeps
-# the local model resident between dictations (Ollama-specific).
+# the (local or remote) model resident between dictations (Ollama-specific).
 LLM_BACKEND = os.environ.get("VOX_LLM", "off").lower()
-_LOCAL_BACKENDS = ("local", "ollama", "openai-compatible")
+_LOCAL_BACKENDS = ("local", "ollama", "openai-compatible", "remote")
 LLM_CHAIN = [b.strip() for b in LLM_BACKEND.split(",")
              if b.strip() and b.strip() != "off"]
+# A chain entry that cannot possibly answer is dropped up front: with no API
+# key the Anthropic SDK fails in milliseconds on EVERY dictation, spamming the
+# log and wasting a race lane. Noted once at startup (flushed by warm_llm)
+# instead of twice per dictation.
+_LLM_CHAIN_NOTES = []
+if "anthropic" in LLM_CHAIN and not (os.environ.get("ANTHROPIC_API_KEY")
+                                     or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+    LLM_CHAIN = [b for b in LLM_CHAIN if b != "anthropic"]
+    _LLM_CHAIN_NOTES.append(
+        "VOX_LLM lists 'anthropic' but ANTHROPIC_API_KEY is not set; "
+        "skipping that backend (setx ANTHROPIC_API_KEY <key>, then restart "
+        "vox, to enable Claude cleanup)")
 # qwen3:4b-instruct: benchmarked 2026-08-03 against qwen2.5:3b-instruct on the
 # self-repair suite (CPU, Core Ultra 9 386H: 0.7-1.2s warm, inside LLM_BUDGET;
 # GPU is faster still). The 2.5-3b handles verbatim restarts and simple "no
@@ -218,7 +241,47 @@ def _backend_model(i, backend):
     return _MODEL_OVERRIDES[i] if i < len(_MODEL_OVERRIDES) else _default_model(backend)
 # 127.0.0.1, not "localhost": on Windows the hostname resolves to IPv6 ::1 first
 # and stalls ~2s per request before IPv4 fallback (measured), swamping inference.
-LLM_URL = os.environ.get("VOX_LLM_URL", "http://127.0.0.1:11434/v1").rstrip("/")
+LLM_URL_DEFAULT = "http://127.0.0.1:11434/v1"
+_URL_ENTRIES = [u.strip().rstrip("/")
+                for u in os.environ.get("VOX_LLM_URL", "").split(",")
+                if u.strip()]
+
+
+def _backend_url(i, backend):
+    """Endpoint for chain position i (local-style backends only).
+
+    One VOX_LLM_URL value serves every local-style backend (the classic
+    single-server setup); a comma list is position-aligned with the chain,
+    an entry past the list's end falling back to the default. Non-local
+    backends (anthropic) return None and ignore it.
+    """
+    if backend not in _LOCAL_BACKENDS:
+        return None
+    if len(_URL_ENTRIES) == 1:
+        return _URL_ENTRIES[0]
+    if i < len(_URL_ENTRIES) and _URL_ENTRIES[i]:
+        return _URL_ENTRIES[i]
+    return LLM_URL_DEFAULT
+
+
+def _backend_host_note(i, backend):
+    """' @ host' suffix for banners when a backend targets a non-loopback
+    server; empty for the classic local setup so banners stay unchanged."""
+    url = _backend_url(i, backend)
+    if not url:
+        return ""
+    netloc = urllib.parse.urlsplit(url).netloc
+    if netloc.startswith(("127.0.0.1", "localhost", "[::1]")):
+        return ""
+    return f" @ {netloc}"
+
+
+# TCP connect ceiling for NON-loopback LLM endpoints (seconds). An unreachable
+# remote (box asleep, VPN kill-switch blackholing Tailscale) would otherwise
+# hang urllib until the race deadline on EVERY dictation; probing the connect
+# first makes it lose the race in milliseconds instead, so the local fallback
+# serves immediately. Costs ~1-40ms per request when the remote is healthy.
+LLM_CONNECT_TIMEOUT = float(os.environ.get("VOX_LLM_CONNECT_TIMEOUT", "0.6"))
 LLM_KEEPALIVE = os.environ.get("VOX_LLM_KEEPALIVE", "30m")
 # The fallback on timeout is the raw transcript (never lost), so this is just the
 # ceiling before we give up and paste raw. A warm local model cleans in ~0.2s and
@@ -232,6 +295,16 @@ LLM_TIMEOUT = float(os.environ.get("VOX_LLM_TIMEOUT", "10"))
 # pays ~5s to page back in. The keep-warm heartbeat below makes that rare;
 # this budget caps the damage when it happens anyway.
 LLM_BUDGET = float(os.environ.get("VOX_LLM_BUDGET", "1.5"))
+# Long transcripts take the local model proportionally longer to rewrite
+# (decode time ~ output tokens ~ transcript length; a 250-char dictation
+# measures 1.4s idle / 2.8s under CPU load), so the race budget grows with
+# input length: floor VOX_LLM_BUDGET, +10ms per character past a short
+# dictation, capped at VOX_LLM_BUDGET_MAX. Under the old flat 1.5s every
+# multi-sentence dictation lost the race and pasted raw - and those are
+# exactly the dictations with the most spurious sentence breaks for the LLM
+# to merge. The budget is a CEILING, not a wait: the race returns the moment
+# a backend answers, so the cap only bites while a backend is still working.
+LLM_BUDGET_MAX = float(os.environ.get("VOX_LLM_BUDGET_MAX", "5.0"))
 # Keep-warm ping cadence (seconds; 0 disables). A tiny request every few
 # minutes keeps the model's pages hot so first-after-idle stays ~0.2s.
 LLM_KEEPWARM_SEC = float(os.environ.get("VOX_LLM_KEEPWARM", "240"))
@@ -242,7 +315,12 @@ LLM_KEEPWARM_SEC = float(os.environ.get("VOX_LLM_KEEPWARM", "240"))
 # can't see - paraphrasing away or silently dropping whole clauses (observed
 # with qwen2.5:3b, e.g. rewriting a 4-sentence dictation down to 2). A false
 # positive only costs the polish: the raw transcript is pasted. 0 disables.
-LLM_DROP_MAX = float(os.environ.get("VOX_LLM_DROP_MAX", "0.15"))
+# 0.25 (was 0.15): Michael wants Wispr-style succinctness, and synonym-level
+# polish ("whole"->"entire", "because"->"as") costs ~1 missing word each, so
+# the strict-verbatim limit vetoed exactly the cleanups he asked for
+# (observed 2026-08-15 with qwen3:30b). Clause-dropping still lands far
+# above 0.25.
+LLM_DROP_MAX = float(os.environ.get("VOX_LLM_DROP_MAX", "0.25"))
 
 # Push-to-talk chord (see the hotkey vocabulary above). Resolved per machine:
 # an explicit VOX_HOTKEY wins; otherwise settings.local.json (what the tray
@@ -326,6 +404,20 @@ PREFETCH_SILENCE_DB = float(os.environ.get("VOX_PREFETCH_SILENCE_DB", "-42.0"))
 PREFETCH_COMPARE = os.environ.get("VOX_PREFETCH_COMPARE", "1").lower() not in (
     "0", "false", "off", "no",
 )
+# Short-tail acoustic merge: a release tail of just a few words decodes with
+# no acoustic context, so Whisper finalizes it as its own tiny "sentence"
+# ("...at various caps. Up to 175") - the most common leftover splice
+# artifact. When the tail is shorter than MAX_TAIL, re-decode it TOGETHER
+# with the last committed segment as one chunk: Whisper hears the boundary
+# continuously and punctuates it as one sentence, no text heuristics needed.
+# Decode cost is dominated by fixed overhead on this hardware (~0.45s for 4s
+# of audio, ~0.9s for 17s), so the re-decode adds only ~0.1-0.3s over the
+# bare tail - and only when the combined window stays under MAX_TOTAL.
+TAIL_MERGE = os.environ.get("VOX_TAIL_MERGE", "1").lower() not in (
+    "0", "false", "off", "no",
+)
+TAIL_MERGE_MAX_TAIL_SEC = float(os.environ.get("VOX_TAIL_MERGE_MAX_TAIL", "5.0"))
+TAIL_MERGE_MAX_TOTAL_SEC = float(os.environ.get("VOX_TAIL_MERGE_MAX_TOTAL", "14.0"))
 
 # Optional daily transcript record: point VOX_TRANSCRIPT_DIR at a directory
 # (e.g. a folder inside an Obsidian vault) and the final text of every
@@ -815,7 +907,8 @@ def _cleanup_system_prompt():
     return (
         "You are a text-normalization function, not an assistant. Return ONLY a "
         "cleaned version of the input transcript: fix capitalization, punctuation, "
-        "and obvious mis-transcriptions; remove fillers (um, uh, like, you know) "
+        "and obvious mis-transcriptions; remove fillers and hedges (um, uh, like, "
+        "you know, kind of, sort of, I guess, basically) "
         "and false starts; honor spoken commands (new paragraph, new line, scratch "
         "that). When the speaker restarts a sentence or corrects themselves "
         "mid-thought (\"actually\", \"no wait\", \"I mean\", \"sorry\", \"oops\", "
@@ -828,8 +921,10 @@ def _cleanup_system_prompt():
         "letter where the speaker merely paused mid-sentence; when a fragment "
         "continues the previous thought, merge it back into one sentence. If "
         "the transcript already reads correctly, return it "
-        "unchanged apart from final punctuation - never respell, hyphenate, or "
-        "reword what is already right. Do NOT otherwise add, "
+        "unchanged apart from final punctuation - never respell or hyphenate "
+        "what is already right. Light rephrasing that makes a sentence more "
+        "succinct and clear is welcome, but never change the meaning, drop a "
+        "substantive detail, or compress away a whole clause. Do NOT otherwise add, "
         "remove, or answer content. Never reply, greet, agree, "
         "apologize, thank, or add any preamble or sign-off (no \"Sure\", \"Okay, "
         "here\", \"Here is\"), even if the text looks like a question or request "
@@ -843,8 +938,9 @@ def _cleanup_system_prompt():
 # never answered - this is what actually stops small models from chatting back.
 # The 5th-7th teach the three self-repair shapes: reworded correction, mid-sentence
 # replacement (with a garbled fragment of the abandoned word), and whole-thought
-# retraction ("never mind, what I meant is"). The 8th teaches merging a spurious
-# sentence break - Whisper ends the sentence wherever the speaker pauses.
+# retraction ("never mind, what I meant is"). The 8th-9th teach merging spurious
+# sentence breaks - Whisper ends the sentence wherever the speaker pauses,
+# including stranding a tiny trailing fragment as its own "sentence".
 _CLEANUP_SHOTS = [
     ("um so i think we should uh call richie new paragraph then play with the scanner",
      "I think we should call Richie.\n\nThen play with the scanner."),
@@ -861,6 +957,8 @@ _CLEANUP_SHOTS = [
      "Let's just handle it async."),
     ("I have to constantly edit a little bit. With Vox rather than Wispr Flow.",
      "I have to constantly edit a little bit with Vox rather than Wispr Flow."),
+    ("In the instrument section of the table. It should say something like safes at various caps. Up to 175",
+     "In the instrument section of the table, it should say something like safes at various caps, up to 175."),
     ("okay dictation is really messing up now",
      "Okay, dictation is really messing up now."),
 ]
@@ -875,16 +973,26 @@ def _cleanup_fewshot():
     return msgs
 
 
-def _llm_format_local(text, system, model):
-    """Cleanup via a LOCAL OpenAI-compatible chat endpoint (Ollama etc.).
+def _llm_format_local(text, system, model, url=LLM_URL_DEFAULT):
+    """Cleanup via an OpenAI-compatible chat endpoint (Ollama etc.).
 
     Stdlib-only (urllib), so no extra dependency and nothing to install in the
-    venv. Deterministic (temperature 0) and offline. keep_alive keeps the model
-    resident on Ollama so there's no per-dictation reload; harmless on servers
-    that ignore the field. NOTE: the default URL uses 127.0.0.1, not "localhost" -
-    on Windows "localhost" resolves to IPv6 ::1 first and stalls ~2s per request
-    before falling back to IPv4, which dwarfs the model's own ~0.2s inference.
+    venv. Deterministic (temperature 0). keep_alive keeps the model resident
+    on Ollama so there's no per-dictation reload; harmless on servers that
+    ignore the field. Serves both the loopback server and a remote one (a big
+    model on another box); non-loopback endpoints get a fast TCP probe first
+    so an unreachable remote fails the race in milliseconds, not at the
+    deadline. NOTE: the default URL uses 127.0.0.1, not "localhost" - on
+    Windows "localhost" resolves to IPv6 ::1 first and stalls ~2s per request
+    before falling back to IPv4, which dwarfs the model's own inference.
     """
+    parts = urllib.parse.urlsplit(url)
+    host = parts.hostname or "127.0.0.1"
+    if host not in ("127.0.0.1", "::1", "localhost"):
+        probe = socket.create_connection(
+            (host, parts.port or (443 if parts.scheme == "https" else 80)),
+            timeout=LLM_CONNECT_TIMEOUT)
+        probe.close()
     payload = {
         "model": model,
         "messages": (
@@ -897,7 +1005,7 @@ def _llm_format_local(text, system, model):
         "keep_alive": LLM_KEEPALIVE,
     }
     req = urllib.request.Request(
-        LLM_URL + "/chat/completions",
+        url + "/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -912,8 +1020,9 @@ def _llm_format_local(text, system, model):
 _ANTHROPIC_CLIENT = None
 
 
-def _llm_format_anthropic(text, system, model):
+def _llm_format_anthropic(text, system, model, url=None):
     """Cleanup via the Anthropic API (needs ANTHROPIC_API_KEY). Uses the SDK.
+    `url` is accepted for signature parity with the local driver and ignored.
 
     The client is created once and reused so per-dictation calls keep the
     pooled TLS connection - rebuilding it would add a few hundred ms of
@@ -938,41 +1047,88 @@ def warm_llm():
     A cold Ollama model load is many seconds (weights into VRAM); without this
     the first real dictation would block or time out and fall back to raw text.
     Runs in a background thread at startup so it never delays readiness, and is
-    best-effort - if the server isn't up yet it just logs and moves on (the
-    first dictation pays the load cost instead). Warms the first LOCAL backend
-    in the chain - a chain like "anthropic,local" still keeps its offline
-    fallback hot, which is the whole point of the fallback.
+    best-effort - if a server isn't up yet it just logs and moves on (the
+    first dictation pays the load cost instead). Warms EVERY distinct
+    local-style endpoint in the chain - "remote,local" pre-loads the big
+    model on the remote box AND keeps the offline fallback hot, which is the
+    whole point of the fallback.
     """
-    local_model = next((_backend_model(i, b) for i, b in enumerate(LLM_CHAIN)
-                        if b in _LOCAL_BACKENDS), None)
-    if local_model is None:
+    for note in _LLM_CHAIN_NOTES:
+        log(f">> {note}")
+    endpoints = []
+    for i, b in enumerate(LLM_CHAIN):
+        if b in _LOCAL_BACKENDS:
+            pair = (_backend_url(i, b), _backend_model(i, b))
+            if pair not in endpoints:
+                endpoints.append(pair)
+    if not endpoints:
         return
 
+    def _touch(url, model_name):
+        _llm_format_local("ok", _cleanup_system_prompt(), model_name, url)
+
     def _warm():
-        try:
-            t0 = time.monotonic()
-            _llm_format_local("ok", _cleanup_system_prompt(), local_model)
-            log(f">> LLM warm-up done in {time.monotonic() - t0:.1f}s "
-                f"({local_model} resident)")
-        except Exception as e:
-            log(f">> LLM warm-up skipped ({e.__class__.__name__}); "
-                "first dictation will load the model")
-        # Keep-warm heartbeat: without a periodic compute touch, Windows pages
-        # the idle model's VRAM out and the first cleanup after a long gap
-        # stalls ~5s paging it back. A tiny request every few minutes keeps it
-        # hot for negligible cost. Best-effort forever; failures just mean the
-        # next real dictation warms it (and pays once).
+        for url, model_name in endpoints:
+            try:
+                t0 = time.monotonic()
+                _touch(url, model_name)
+                log(f">> LLM warm-up done in {time.monotonic() - t0:.1f}s "
+                    f"({model_name} resident at "
+                    f"{urllib.parse.urlsplit(url).netloc})")
+            except Exception as e:
+                log(f">> LLM warm-up skipped for "
+                    f"{urllib.parse.urlsplit(url).netloc} "
+                    f"({e.__class__.__name__}); first use will load the model")
+        # Keep-warm heartbeat: without a periodic compute touch, an idle
+        # model gets paged out (Windows) or unloaded at keep_alive expiry
+        # (Ollama), and the first cleanup after a long gap stalls seconds
+        # paging/loading it back. A tiny request every few minutes keeps
+        # every endpoint hot for negligible cost. Best-effort forever; an
+        # unreachable remote just fails its fast probe and is retried next
+        # tick (it re-warms on its own the first time it answers a race).
         while LLM_KEEPWARM_SEC > 0:
             time.sleep(LLM_KEEPWARM_SEC)
-            try:
-                _llm_format_local("ok", _cleanup_system_prompt(), local_model)
-            except Exception:
-                pass
+            for url, model_name in endpoints:
+                try:
+                    _touch(url, model_name)
+                except Exception:
+                    pass
 
     threading.Thread(target=_warm, daemon=True).start()
 
 
 _WORD_RE = re.compile(r"[a-z0-9']+")
+
+# Contractions are expanded before the two output guards compare word sets,
+# so a cleanup that normalizes "it is" -> "it's" (or expands the reverse)
+# reads as the SAME speech - not as two dropped words plus a novel one, which
+# is how the raw set-membership math used to score it. The ambiguous 's
+# (is/has) expands to "is"; membership only needs to be close, not parsed.
+_CONTRACTION_MAP = {
+    "it's": ("it", "is"), "that's": ("that", "is"), "there's": ("there", "is"),
+    "here's": ("here", "is"), "he's": ("he", "is"), "she's": ("she", "is"),
+    "what's": ("what", "is"), "who's": ("who", "is"), "let's": ("let", "us"),
+    "we're": ("we", "are"), "they're": ("they", "are"), "you're": ("you", "are"),
+    "i'm": ("i", "am"), "i've": ("i", "have"), "we've": ("we", "have"),
+    "you've": ("you", "have"), "they've": ("they", "have"),
+    "i'll": ("i", "will"), "we'll": ("we", "will"), "you'll": ("you", "will"),
+    "it'll": ("it", "will"), "i'd": ("i", "would"), "we'd": ("we", "would"),
+    "don't": ("do", "not"), "doesn't": ("does", "not"), "didn't": ("did", "not"),
+    "can't": ("can", "not"), "cannot": ("can", "not"), "won't": ("will", "not"),
+    "wouldn't": ("would", "not"), "couldn't": ("could", "not"),
+    "shouldn't": ("should", "not"), "isn't": ("is", "not"),
+    "aren't": ("are", "not"), "wasn't": ("was", "not"), "weren't": ("were", "not"),
+    "gonna": ("going", "to"), "wanna": ("want", "to"), "gotta": ("got", "to"),
+}
+
+
+def _guard_words(s):
+    """Tokenize for the guards: lowercase, straight apostrophes, contractions
+    expanded (see _CONTRACTION_MAP)."""
+    out = []
+    for w in _WORD_RE.findall(s.replace("’", "'").lower()):
+        out.extend(_CONTRACTION_MAP.get(w, (w,)))
+    return out
 
 
 def _looks_like_reply(raw, cleaned):
@@ -992,8 +1148,8 @@ def _looks_like_reply(raw, cleaned):
     homophone fix on a short dictation from tripping it. False positives are
     cheap: the caller falls back to the raw transcript, losing only the polish.
     """
-    raw_words = set(_WORD_RE.findall(raw.lower()))
-    out_words = _WORD_RE.findall(cleaned.lower())
+    raw_words = set(_guard_words(raw))
+    out_words = _guard_words(cleaned)
     if not raw_words or not out_words:
         return False
     novel = sum(1 for w in out_words if w not in raw_words)
@@ -1003,11 +1159,15 @@ def _looks_like_reply(raw, cleaned):
 # Tokens the cleanup pass legitimately removes (fillers, hedges) or transforms
 # into formatting (spoken commands), so their disappearance is not evidence of
 # a bad rewrite. Everything else the speaker said is expected to survive.
+# Includes Michael's habitual hedges ("kind of", "sort of", "just", "really")
+# - the 30b cleanup was correctly stripping them and the guard was vetoing
+# the result for it (observed 2026-08-15).
 _GUARD_DROPPABLE = {
     "um", "uh", "uhm", "erm", "er", "ah", "hmm", "mm", "mhm", "huh", "oh",
     "okay", "ok", "like", "well", "so", "yeah", "actually", "basically",
     "literally", "anyway", "alright", "right",
     "you", "know", "i", "mean", "guess",
+    "kind", "sort", "of", "just", "kinda", "sorta", "really", "honestly",
     "sorry", "oops", "nevermind",
     "new", "paragraph", "line", "period", "comma",
 }
@@ -1043,13 +1203,10 @@ def _dropped_too_much(raw, cleaned):
         # the superseded words, so give the LLM much more deletion headroom.
         limit = max(limit, 0.45)
 
-    def words(s):
-        return _WORD_RE.findall(s.replace("’", "'").lower())
-
-    content = [w for w in words(raw) if w not in _GUARD_DROPPABLE]
+    content = [w for w in _guard_words(raw) if w not in _GUARD_DROPPABLE]
     if len(content) < 8:
         return False  # too few words for a fraction to mean anything
-    kept = set(words(cleaned))
+    kept = set(_guard_words(cleaned))
     missing = sum(1 for w in content if w not in kept)
     return missing / len(content) > limit
 
@@ -1091,7 +1248,8 @@ def llm_format(text):
     as before; a comma list ("anthropic,local") is a PREFERENCE CHAIN: all
     backends fire in parallel and the answer from the earliest-listed backend
     that succeeds wins. The race - rather than try-then-fall-back - keeps the
-    worst case inside one LLM_BUDGET: when the cloud is unreachable (plane,
+    worst case inside one race budget (LLM_BUDGET, stretched with transcript
+    length up to LLM_BUDGET_MAX): when the cloud is unreachable (plane,
     outage, missing key) its attempt fails in milliseconds and the local
     result, already in flight, serves the dictation. A result that fails the
     reply/deletion guards is skipped in favor of the next backend's; if
@@ -1107,9 +1265,9 @@ def llm_format(text):
         outcomes = {}          # chain index -> cleaned text, or None on failure
         answers = queue.Queue()
 
-        def _run(i, backend_fn, model):
+        def _run(i, backend_fn, model, url):
             try:
-                answers.put((i, backend_fn(text, system, model)))
+                answers.put((i, backend_fn(text, system, model, url)))
             except Exception as e:
                 log(f">> LLM backend '{LLM_CHAIN[i]}' failed "
                     f"({e.__class__.__name__}: {e})")
@@ -1122,10 +1280,13 @@ def llm_format(text):
                 log(f">> Unknown VOX_LLM backend {name!r}; skipping")
                 outcomes[i] = None
                 continue
-            threading.Thread(target=_run, args=(i, fn, _backend_model(i, name)),
-                             daemon=True).start()
+            threading.Thread(
+                target=_run,
+                args=(i, fn, _backend_model(i, name), _backend_url(i, name)),
+                daemon=True).start()
 
-        deadline = t0 + LLM_BUDGET
+        budget = min(LLM_BUDGET_MAX, LLM_BUDGET + 0.010 * max(0, len(text) - 100))
+        deadline = t0 + budget
         while len(outcomes) < len(LLM_CHAIN):
             # Settled as soon as some backend has answered AND every
             # better-preference backend has already failed - waiting longer
@@ -1163,7 +1324,7 @@ def llm_format(text):
             log(f">> LLM cleanup ({LLM_CHAIN[i]}) in {time.monotonic() - t0:.2f}s")
             return _rejoin_split_words(text, cleaned)
         if not any(outcomes.values()):
-            log(f">> LLM cleanup: no backend answered within {LLM_BUDGET:.1f}s; "
+            log(f">> LLM cleanup: no backend answered within {budget:.1f}s; "
                 "using raw text")
         return text
     except Exception as e:
@@ -1719,6 +1880,7 @@ class _PrefetchSession:
         self.block_sec = None       # measured from the first block; None until one has arrived
         self.last_cut = 0           # block index already prefetched (blocks[:last_cut] is done)
         self.texts = []             # transcribed text of each committed segment, in order
+        self.spans = []             # (start_block, end_block) per texts[] entry, for tail merge
         self.dead = False
         self.stop_flag = threading.Event()
         self.thread = None
@@ -1825,25 +1987,51 @@ _JOIN_FUNCTION_WORDS = {
     "very", "some", "any", "all", "both", "each", "every", "no",
     "what", "how", "why", "who", "whom", "whose",
     "plus", "like", "kind", "sort", "maybe", "basically", "actually",
+    "up", "out", "down", "off", "back", "away", "across", "along",
+    "around", "per",
 }
+
+# Words that essentially never START a declarative sentence, so a segment
+# opening with one after a "finalized" predecessor is a continuation, however
+# long it runs ("...for section 4. | Which is paragraph 32 through 38 or so.").
+# Guarded by "does the segment end in '?'" at the use site, since several are
+# legitimate question openers ("Which is better?").
+_JOIN_NEVER_INITIAL = {"which", "whereas", "whom", "whose", "nor", "than"}
+
+# A right-hand segment at most this many words long is treated as a fragment
+# (never a real sentence) when it also starts with a function word: "Up to
+# 175" and "That you've emulated?" are continuations; nobody dictates them as
+# standalone sentences. Real short sentences ("Let's remove that.") start
+# with content words and are untouched.
+_JOIN_FRAGMENT_MAX_WORDS = 4
 
 # 3+ dots or the one-char ellipsis - NOT a lone '.', which is a real sentence end.
 _TRAIL_ELLIPSIS_RE = re.compile(r"(?:\.{3,}|…+)\s*$")
+# A dangling dash after a word is Whisper's other trail-off marker
+# ("...stores were like- | Dineema fabric...").
+_TRAIL_DASH_RE = re.compile(r"(?<=[\w'’])\s*[-–—]\s*$")
 _TRAIL_TERMINAL_RE = re.compile(r"[.!?]+$")
 _LEAD_WORD_RE = re.compile(r"[A-Za-z][\w'’\-]*")
+_SEG_WORD_RE = re.compile(r"[A-Za-z0-9][\w'’\-]*")
 
 
-def repair_segment_joins(texts):
+def repair_segment_joins(texts, protected=None):
     """Join prefetch segments, undoing Whisper's per-chunk finalization.
 
     Pure text-in/text-out (like find_prefetch_cut) so it is trivially
     unit-testable against real divergence cases from prefetch-compare.log.
-    Per boundary, in order:
+    `protected` is the capitalization-protected vocabulary (defaults to
+    HOTWORDS); their leading capitals are never softened. Per boundary:
 
-      1. A trailing ellipsis on the left side is Whisper marking "trailed
-         off mid-thought" at the cut - drop it, the thought continues in the
-         next segment ("Include things that... | Gretchen said" ->
-         "Include things that Gretchen said").
+      1. A trailing ellipsis or dangling dash on the left side is Whisper
+         marking "trailed off mid-thought" at the cut - drop it, the thought
+         continues in the next segment ("Include things that... | Gretchen
+         said" -> "Include things that Gretchen said"). The right side then
+         falls through to rule 3, so a whitelisted function word loses its
+         chunk-start capital while a potential name keeps it. (A non-listed
+         content word keeps a stray capital - "not that... | Excited" joins
+         as "not that Excited" - because text alone cannot tell an adjective
+         from a name; the LLM pass owns that cosmetic fix.)
       2. Right side starts lowercase -> it is a continuation (Whisper
          capitalizes genuine sentence starts), so any terminal punctuation
          on the left was false finalization - strip it ("...Halcyon Loans?
@@ -1851,7 +2039,34 @@ def repair_segment_joins(texts):
       3. Left side ends mid-sentence (no terminal punctuation) but the right
          starts with a capital -> the capital is chunk-start artifact; undo
          it only for whitelisted function words, never for potential names.
+      4. Both sides look finalized (left terminal punctuation, right capital)
+         - usually a genuine break, EXCEPT two shapes that cannot be real:
+         a right side opening with a never-sentence-initial word ("...for
+         section 4. | Which is paragraph 32 through 38 or so."), and a short
+         function-word fragment ("...at various caps. | Up to 175") - the
+         classic tiny-orphan-sentence artifact. Both merge: strip the left's
+         terminal punctuation, soften the right's capital. Anything longer
+         or content-word-led is left alone - that ambiguity needs audio (the
+         tail-merge re-decode) or semantics (the LLM pass), not heuristics.
     """
+    if protected is None:
+        protected = HOTWORDS
+    protected_words = {w.lower() for h in protected for w in h.split()}
+
+    def first_word(seg):
+        m = _LEAD_WORD_RE.match(seg)
+        return m.group(0) if m else ""
+
+    def softenable(w):
+        # A leading capital we are allowed to lowercase: not "I"/"I'm"/...,
+        # not a protected (hotword) spelling.
+        return (bool(w) and w[0].isupper() and w != "I"
+                and not w.startswith(("I'", "I’"))
+                and w.lower() not in protected_words)
+
+    def demote(seg):
+        return seg[0].lower() + seg[1:]
+
     parts = [t.strip() for t in texts if t and t.strip()]
     if not parts:
         return ""
@@ -1859,13 +2074,27 @@ def repair_segment_joins(texts):
     for seg in parts[1:]:
         if _TRAIL_ELLIPSIS_RE.search(out):
             out = _TRAIL_ELLIPSIS_RE.sub("", out).rstrip()
+        elif _TRAIL_DASH_RE.search(out):
+            out = _TRAIL_DASH_RE.sub("", out).rstrip()
+        fw = first_word(seg)
         if seg[:1].islower():
             out = _TRAIL_TERMINAL_RE.sub("", out.rstrip()).rstrip()
         elif not re.search(r"[.!?:]$", out):
-            first = _LEAD_WORD_RE.match(seg)
-            if (first and first.group(0)[0].isupper()
-                    and first.group(0).lower() in _JOIN_FUNCTION_WORDS):
-                seg = seg[0].lower() + seg[1:]
+            if softenable(fw) and fw.lower() in _JOIN_FUNCTION_WORDS:
+                seg = demote(seg)
+        elif softenable(fw):
+            fwl = fw.lower()
+            is_question = seg.rstrip().endswith("?")
+            fragment = (fwl in _JOIN_FUNCTION_WORDS
+                        and len(_SEG_WORD_RE.findall(seg))
+                        <= _JOIN_FRAGMENT_MAX_WORDS
+                        # a "?" fragment merges only on relative-clause
+                        # openers ("That you've emulated?"), never on
+                        # auxiliary questions ("Do you agree?")
+                        and (not is_question or fwl in ("that", "which")))
+            if (fwl in _JOIN_NEVER_INITIAL and not is_question) or fragment:
+                out = _TRAIL_TERMINAL_RE.sub("", out.rstrip()).rstrip()
+                seg = demote(seg)
         out = out + " " + seg
     return out
 
@@ -1905,6 +2134,7 @@ def _prefetch_pump(session):
         text = strip_phantoms(text, quiet=True)
     if text:
         session.texts.append(text)
+        session.spans.append((session.last_cut, cut))
     session.last_cut = cut
 
 
@@ -2123,34 +2353,68 @@ def stop_and_transcribe():
             log(">> Prefetch worker did not stop in time; using full-buffer transcription")
         elif not session.dead and session.texts:
             cut = session.last_cut
-            tail_frames = frames[cut:]
-            tail_audio = (
-                np.concatenate(tail_frames, axis=0).flatten()
-                if tail_frames else np.zeros(0, dtype=np.float32)
-            )
-            if TRAILING_PAD_SEC > 0:
-                tail_audio = np.concatenate(
-                    [tail_audio, np.zeros(
-                        int(SAMPLE_RATE * TRAILING_PAD_SEC), dtype=tail_audio.dtype
-                    )]
-                )
-            t0 = time.monotonic()
-            tail_text = transcribe_audio(
-                tail_audio, with_hotwords=True,
-                prev_text=" ".join(session.texts) or None)
-            tail_decode_sec = time.monotonic() - t0
             pre_done_sec = sum(len(b) for b in frames[:cut]) / SAMPLE_RATE
             tail_sec = duration - pre_done_sec
+
+            def _padded(blocks):
+                chunk = (np.concatenate(blocks, axis=0).flatten()
+                         if blocks else np.zeros(0, dtype=np.float32))
+                if TRAILING_PAD_SEC > 0:
+                    chunk = np.concatenate(
+                        [chunk, np.zeros(int(SAMPLE_RATE * TRAILING_PAD_SEC),
+                                         dtype=chunk.dtype)])
+                return chunk
+
+            # Short-tail acoustic merge (see TAIL_MERGE above): decode the
+            # last committed segment and the tail as ONE chunk, so the final
+            # boundary is punctuated from audio instead of glued from text.
+            # Skipped when the tail is long (cost), all-silence (nothing to
+            # gain), or span bookkeeping is inconsistent (defensive).
+            seg_texts = list(session.texts)
+            merge_start = None
+            if (TAIL_MERGE and tail_sec < TAIL_MERGE_MAX_TAIL_SEC
+                    and len(session.spans) == len(session.texts)):
+                start = session.spans[-1][0]
+                merged_sec = sum(len(b) for b in frames[start:]) / SAMPLE_RATE
+                tail_rms = session.rms_db[cut:]
+                n_tail = len(frames) - cut
+                tail_silent = n_tail == 0 or (
+                    len(tail_rms) >= 0.9 * n_tail and bool(tail_rms)
+                    and max(tail_rms) <= PREFETCH_SILENCE_DB)
+                if merged_sec <= TAIL_MERGE_MAX_TOTAL_SEC and not tail_silent:
+                    merge_start = start
+            t0 = time.monotonic()
+            if merge_start is not None:
+                tail_text = transcribe_audio(
+                    _padded(frames[merge_start:]), with_hotwords=True,
+                    prev_text=" ".join(seg_texts[:-1]) or None)
+                if tail_text:
+                    seg_texts = seg_texts[:-1]
+                else:
+                    # The merged window decoded to nothing although its first
+                    # part previously produced text - distrust the re-decode:
+                    # keep the committed text and decode the bare tail instead.
+                    merge_start = None
+                    tail_text = transcribe_audio(
+                        _padded(frames[cut:]), with_hotwords=True,
+                        prev_text=" ".join(seg_texts) or None)
+            else:
+                tail_text = transcribe_audio(
+                    _padded(frames[cut:]), with_hotwords=True,
+                    prev_text=" ".join(seg_texts) or None)
+            tail_decode_sec = time.monotonic() - t0
             log(f">> Prefetch: {len(session.texts)} segs, {pre_done_sec:.1f}s "
-                f"pre-done; tail {tail_sec:.1f}s (decoded in {tail_decode_sec:.2f}s)")
-            segs = session.texts + [tail_text]
+                f"pre-done; tail {tail_sec:.1f}s"
+                + (" merged with last seg" if merge_start is not None else "")
+                + f" (decoded in {tail_decode_sec:.2f}s)")
+            segs = seg_texts + [tail_text]
             text = repair_segment_joins(segs)
             if text != " ".join(t for t in segs if t):
                 log(">> Join repair: smoothed segment boundary artifacts")
             if PREFETCH_COMPARE and text:
                 threading.Thread(
                     target=_shadow_compare,
-                    args=(audio, text, list(session.texts), tail_text),
+                    args=(audio, text, seg_texts, tail_text),
                     daemon=True,
                 ).start()
             # else: session.dead (an error, or superseded) or produced no
@@ -2619,7 +2883,8 @@ def write_status_doc():
         f"- Model: `{MODEL_SIZE}`",
         f"- Device: `{DEVICE}` ({COMPUTE_TYPE})",
         "- LLM cleanup: " + (" -> ".join(
-            f"{b} (`{_backend_model(i, b)}`)" for i, b in enumerate(LLM_CHAIN)
+            f"{b} (`{_backend_model(i, b)}`{_backend_host_note(i, b)})"
+            for i, b in enumerate(LLM_CHAIN)
         ) or "off"),
         f"- Dictionary: {len(hotwords)} hotwords, {len(corrections)} corrections",
         f"- Autostart: {_autostart_state()}",
@@ -2863,7 +3128,8 @@ def main():
         log("  Tray:   on (right-click the tray icon for menu)")
     if LLM_CHAIN:
         log("  LLM cleanup: " + " -> ".join(
-            f"{b} ({_backend_model(i, b)})" for i, b in enumerate(LLM_CHAIN)))
+            f"{b} ({_backend_model(i, b)}{_backend_host_note(i, b)})"
+            for i, b in enumerate(LLM_CHAIN)))
     if HOTWORDS or CORRECTIONS:
         log(f"  Dictionary: {len(HOTWORDS)} hotwords, "
             f"{len(CORRECTIONS)} corrections")
