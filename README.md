@@ -176,6 +176,8 @@ A comma-separated `VOX_LLM` is a preference chain: every dictation fires all bac
 
 Every configuration is **fully fail-safe**: no server/key, no internet, a timeout, or any error falls back to the raw transcript, so a dictation is never lost. Your personal `dictionary.json` corrections still run last, so brand terms like Rokid always survive.
 
+**Missing-model fallback.** If the configured local model isn't actually installed on the server (a fresh machine, a pruned Ollama), every cleanup would 404 identically — and under `pythonw` nothing makes that visible, so raw text would paste for weeks. Vox now detects this at warm-up, switches to the best *installed* known-good model (`qwen3:4b-instruct` → `qwen2.5:3b-instruct` → `qwen2.5:1.5b-instruct`), and logs the `ollama pull` command that restores the configured one.
+
 ### Model size guide
 
 | Model | Speed | Accuracy | VRAM | Good for |

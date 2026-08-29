@@ -62,6 +62,31 @@ def _get_uia():
         return None
 
 
+def _selection_range(pattern):
+    """The first NON-degenerate selected range, or None (no selection).
+
+    Matters because a dictation typed over a selection REPLACES it: the
+    context that will actually surround the pasted text is what lies outside
+    the selection's endpoints. The caret sits at one END of a selection, so
+    reading around the caret would count the doomed selected words as
+    "context" - e.g. selecting "really good" inside "the plan is really good"
+    and dictating a replacement would look sentence-final instead of
+    mid-sentence.
+    """
+    try:
+        ranges = pattern.GetSelection()
+        if ranges is None or ranges.Length < 1:
+            return None
+        r = ranges.GetElement(0)
+        if r is None:
+            return None
+        if r.CompareEndpoints(_ENDPOINT_START, r, _ENDPOINT_END) == 0:
+            return None  # degenerate = just the caret
+        return r
+    except Exception:
+        return None
+
+
 def _read_now(max_before, max_after):
     """The actual UIA walk: focused element -> TextPattern2 -> caret range."""
     import comtypes
@@ -80,14 +105,24 @@ def _read_now(max_before, max_after):
     if raw is None:
         return None
     pattern = raw.QueryInterface(IUIAutomationTextPattern2)
-    active, caret = pattern.GetCaretRange()
-    if caret is None:
-        return None
-    before_range = caret.Clone()
+    # With a live selection, read around the selection's OUTER endpoints
+    # (that's what will surround the pasted text after it replaces the
+    # selection); otherwise read around the caret.
+    sel = _selection_range(pattern)
+    if sel is not None:
+        before_range = sel.Clone()
+        before_range.MoveEndpointByRange(_ENDPOINT_END, sel, _ENDPOINT_START)
+        after_range = sel.Clone()
+        after_range.MoveEndpointByRange(_ENDPOINT_START, sel, _ENDPOINT_END)
+    else:
+        active, caret = pattern.GetCaretRange()
+        if caret is None:
+            return None
+        before_range = caret.Clone()
+        after_range = caret.Clone()
     before_range.MoveEndpointByUnit(
         _ENDPOINT_START, _TEXT_UNIT_CHARACTER, -max_before)
     before = before_range.GetText(-1) or ""
-    after_range = caret.Clone()
     after_range.MoveEndpointByUnit(
         _ENDPOINT_END, _TEXT_UNIT_CHARACTER, max_after)
     after = after_range.GetText(-1) or ""

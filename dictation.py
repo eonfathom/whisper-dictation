@@ -24,7 +24,6 @@ import ctypes
 import inspect
 import json
 import logging
-import logging.handlers
 import os
 import queue
 import re
@@ -235,9 +234,24 @@ def _default_model(backend):
 _MODEL_OVERRIDES = [m.strip() for m in
                     os.environ.get("VOX_LLM_MODEL", "").split(",") if m.strip()]
 
+# Cleanup models known to behave (see the benchmark notes above), best first.
+# Used when the CONFIGURED local model isn't installed on the server: rather
+# than a silent 404 per dictation - which pastes raw text for weeks with no
+# console to make it visible - warm_llm falls back to the best of these that
+# IS installed. llama3.2:3b is deliberately absent (chats back, rejected
+# 2026-07-14).
+_LOCAL_MODEL_FALLBACKS = [
+    "qwen3:4b-instruct", "qwen2.5:3b-instruct", "qwen2.5:1.5b-instruct",
+]
+# Chain position -> substituted model name (set by warm_llm on a 404).
+_MODEL_SUBSTITUTES = {}
+
 
 def _backend_model(i, backend):
-    """Model for chain position i: the aligned VOX_LLM_MODEL entry, else default."""
+    """Model for chain position i: runtime substitute (missing-model fallback),
+    else the aligned VOX_LLM_MODEL entry, else the per-backend default."""
+    if i in _MODEL_SUBSTITUTES:
+        return _MODEL_SUBSTITUTES[i]
     return _MODEL_OVERRIDES[i] if i < len(_MODEL_OVERRIDES) else _default_model(backend)
 # 127.0.0.1, not "localhost": on Windows the hostname resolves to IPv6 ::1 first
 # and stalls ~2s per request before IPv4 fallback (measured), swamping inference.
@@ -467,11 +481,18 @@ def _make_logger():
     """File logger so windowless runs are diagnosable after the fact.
 
     Under pythonw.exe there is no stdout - every print() is silently discarded -
-    so a mangled dictation used to leave no trace. A small rotating file
-    (512 KB x 2) captures per-dictation diagnostics: duration/samples captured,
-    the raw transcript, anything stripped or recovered, and the final text.
+    so a mangled dictation used to leave no trace. A small log file captures
+    per-dictation diagnostics: duration/samples captured, the raw transcript,
+    anything stripped or recovered, and the final text.
     Default %LOCALAPPDATA%\\vox\\vox.log (Linux: ~/.local/state/vox/vox.log);
     override the path with VOX_LOG, disable with VOX_LOG=0.
+
+    Rotation happens once at STARTUP (vox.log -> vox.log.1 past ~512 KB), not
+    mid-run: RotatingFileHandler's runtime rollover renames fail on Windows
+    whenever any other process still holds the file (a lingering old instance,
+    an AV scan), and a handler stuck in that state silently eats every
+    subsequent record - which once left a windowless Vox unlogged for weeks.
+    A plain always-append FileHandler cannot get into that state.
     """
     dest = os.environ.get("VOX_LOG", "")
     if dest.lower() in ("0", "false", "off", "no"):
@@ -482,9 +503,15 @@ def _make_logger():
         dest = os.path.join(base, "vox", "vox.log")
     try:
         os.makedirs(os.path.dirname(dest), exist_ok=True)
-        handler = logging.handlers.RotatingFileHandler(
-            dest, maxBytes=512 * 1024, backupCount=2, encoding="utf-8"
-        )
+        try:
+            if os.path.getsize(dest) > 512 * 1024:
+                bak = dest + ".1"
+                if os.path.exists(bak):
+                    os.remove(bak)
+                os.replace(dest, bak)
+        except OSError:
+            pass  # missing, or locked by another holder: append to what's there
+        handler = logging.FileHandler(dest, encoding="utf-8")
         handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
         logger = logging.getLogger("vox")
         logger.addHandler(handler)
@@ -1041,6 +1068,45 @@ def _llm_format_anthropic(text, system, model, url=None):
     return "".join(b.text for b in msg.content if b.type == "text").strip()
 
 
+def _installed_local_models(url):
+    """Model names the server at `url` has installed, or None when unknowable.
+
+    Ollama-specific (/api/tags on the server root); a non-Ollama
+    OpenAI-compatible server just returns None and no substitution happens.
+    """
+    root = url[:-len("/v1")] if url.endswith("/v1") else url
+    try:
+        with urllib.request.urlopen(root + "/api/tags", timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return [m.get("name", "") for m in data.get("models", [])]
+    except Exception:
+        return None
+
+
+def _substitute_local_model(idxs, missing, url):
+    """Swap chain slots `idxs` to the best fallback INSTALLED at `url`, or None.
+
+    Called on a model-not-found 404: the configured model would fail every
+    dictation identically, so cleanup stays alive on a known-good installed
+    model instead, with a loud log saying how to get the configured one back.
+    """
+    host = urllib.parse.urlsplit(url).netloc
+    installed = _installed_local_models(url) or []
+    sub = next((m for m in _LOCAL_MODEL_FALLBACKS
+                if m != missing and m in installed), None)
+    if sub:
+        for i in idxs:
+            _MODEL_SUBSTITUTES[i] = sub
+        log(f">> LLM model '{missing}' is NOT INSTALLED at {host}; "
+            f"using '{sub}' until then. To restore: ollama pull {missing} "
+            "(then Restart from the tray)")
+    else:
+        log(f">> LLM model '{missing}' is NOT INSTALLED at {host} "
+            f"and no known fallback is either - that lane is dead. "
+            f"Run: ollama pull {missing}")
+    return sub
+
+
 def warm_llm():
     """Pre-load the local cleanup model so the FIRST dictation isn't slow.
 
@@ -1051,33 +1117,52 @@ def warm_llm():
     first dictation pays the load cost instead). Warms EVERY distinct
     local-style endpoint in the chain - "remote,local" pre-loads the big
     model on the remote box AND keeps the offline fallback hot, which is the
-    whole point of the fallback.
+    whole point of the fallback. A 404 means an endpoint is UP but its model
+    isn't installed at all (not a transient - every dictation would fail
+    identically): substitute the best fallback that IS installed there, so
+    cleanup doesn't silently paste raw text until someone reads the log.
     """
     for note in _LLM_CHAIN_NOTES:
         log(f">> {note}")
-    endpoints = []
+    endpoints = []  # [url, model, chain indices] per distinct (url, model)
     for i, b in enumerate(LLM_CHAIN):
         if b in _LOCAL_BACKENDS:
-            pair = (_backend_url(i, b), _backend_model(i, b))
-            if pair not in endpoints:
-                endpoints.append(pair)
+            url, model_name = _backend_url(i, b), _backend_model(i, b)
+            for ep in endpoints:
+                if ep[0] == url and ep[1] == model_name:
+                    ep[2].append(i)
+                    break
+            else:
+                endpoints.append([url, model_name, [i]])
     if not endpoints:
         return
 
     def _touch(url, model_name):
         _llm_format_local("ok", _cleanup_system_prompt(), model_name, url)
 
+    def _handle_404(ep):
+        sub = _substitute_local_model(ep[2], ep[1], ep[0])
+        if sub:
+            ep[1] = sub
+
     def _warm():
-        for url, model_name in endpoints:
+        for ep in endpoints:
             try:
                 t0 = time.monotonic()
-                _touch(url, model_name)
+                _touch(ep[0], ep[1])
                 log(f">> LLM warm-up done in {time.monotonic() - t0:.1f}s "
-                    f"({model_name} resident at "
-                    f"{urllib.parse.urlsplit(url).netloc})")
+                    f"({ep[1]} resident at "
+                    f"{urllib.parse.urlsplit(ep[0]).netloc})")
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    _handle_404(ep)
+                else:
+                    log(f">> LLM warm-up skipped for "
+                        f"{urllib.parse.urlsplit(ep[0]).netloc} "
+                        f"(HTTPError {e.code}); first use will load the model")
             except Exception as e:
                 log(f">> LLM warm-up skipped for "
-                    f"{urllib.parse.urlsplit(url).netloc} "
+                    f"{urllib.parse.urlsplit(ep[0]).netloc} "
                     f"({e.__class__.__name__}); first use will load the model")
         # Keep-warm heartbeat: without a periodic compute touch, an idle
         # model gets paged out (Windows) or unloaded at keep_alive expiry
@@ -1086,11 +1171,16 @@ def warm_llm():
         # every endpoint hot for negligible cost. Best-effort forever; an
         # unreachable remote just fails its fast probe and is retried next
         # tick (it re-warms on its own the first time it answers a race).
+        # A 404 mid-run (model deleted while Vox is up) substitutes once.
         while LLM_KEEPWARM_SEC > 0:
             time.sleep(LLM_KEEPWARM_SEC)
-            for url, model_name in endpoints:
+            for ep in endpoints:
                 try:
-                    _touch(url, model_name)
+                    _touch(ep[0], ep[1])
+                except urllib.error.HTTPError as e:
+                    if e.code == 404 and not any(
+                            i in _MODEL_SUBSTITUTES for i in ep[2]):
+                        _handle_404(ep)
                 except Exception:
                     pass
 
@@ -1446,7 +1536,9 @@ def smart_case(text):
         a = after.lstrip(" \t")
         if a and (a[0].islower() or a[0] in ",;"):
             s = text.rstrip()
-            if s.endswith("."):
+            # Any single terminal mark counts - Whisper puts "?" on a
+            # question-intonation fragment - but leave "..." / "?!" runs alone.
+            if len(s) > 1 and s[-1] in ".!?" and s[-2] not in ".!?":
                 text = s[:-1]  # inserted clause must not split the sentence
     return text, trailing
 
@@ -2283,7 +2375,16 @@ def transcribe_audio(audio, with_hotwords=True, prev_text=None):
             condition_on_previous_text=False,
             initial_prompt=prompt, **kwargs,
         )
-        return " ".join(seg.text for seg in segments).strip()
+        texts = [seg.text for seg in segments]
+    # Whisper finalizes ITS OWN internal segments the same way it finalizes
+    # prefetch chunks - terminal punctuation + a capital wherever the speaker
+    # merely paused ("all the documents. in the folder") - so a single decode
+    # needs the same boundary repair the prefetch join gets. Rule 2 (lowercase
+    # continuation after a false terminal) is the common in-decode artifact.
+    joined = repair_segment_joins(texts)
+    if joined != " ".join(t.strip() for t in texts if t and t.strip()):
+        log(">> Join repair: smoothed in-decode segment boundaries")
+    return joined
 
 
 def stop_and_transcribe():
