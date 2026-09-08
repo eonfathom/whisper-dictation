@@ -1,6 +1,5 @@
 {
-  "_comment": "Personal dictionary. 'hotwords' bias Whisper toward your vocabulary so it hears names/jargon correctly. 'corrections' are a whole-word, case-insensitive find/replace safety net applied after transcription. Edit freely; restart the app to reload.",
-
+  "_comment": "Personal dictionary. 'hotwords' bias Whisper toward your vocabulary so it hears names/jargon correctly. 'corrections' are a whole-word, case-insensitive find/replace safety net applied after transcription. Edit freely; restart the app to reload. NOTE (2026-09-07): 'ether' -> 'Aethyr' because the notebook is dictated that way; 'either' is deliberately NOT mapped, it is ordinary English. If you ever dictate about diethyl ether or the luminiferous ether, that word will come out 'Aethyr' - remove the entry if that ever costs more than it saves.",
   "hotwords": [
     "Eon",
     "Fathom",
@@ -18,9 +17,10 @@
     "Rokid",
     "Aurelia",
     "connectome",
-    "connectomics"
+    "connectomics",
+    "Aethyr",
+    "Vox"
   ],
-
   "corrections": {
     "connect home": "connectome",
     "connect ohm": "connectome",
@@ -32,6 +32,10 @@
     "obsidion": "Obsidian",
     "rocket glasses": "Rokid glasses",
     "rokid glasses": "Rokid glasses",
-    "eon": "Eon"
+    "eon": "Eon",
+    "ether": "Aethyr",
+    "aether": "Aethyr",
+    "ethyr": "Aethyr",
+    "aethyr": "Aethyr"
   }
 }
